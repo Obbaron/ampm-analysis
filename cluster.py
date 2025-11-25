@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 from sklearn.cluster import DBSCAN
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
 from ampm import import_ampm_data
 
 
@@ -173,44 +173,66 @@ def cluster_data(data : list[np.ndarray],
         print(f"Total noise points: {n_noise_total:,} ({100*n_noise_total/len(labels):.2f}%)")
         print(f"Total clustered points: {np.sum(labels >= 0):,} ({100*np.sum(labels >= 0)/len(labels):.2f}%)")
 
+    # VISUALISATION
     if verbose:
         print("\nPreparing visualization...")
     viz_downsample = max(1, len(coords_3d) // 50000)  # Max 50k points
     viz_coords = coords_3d[::viz_downsample]
     viz_labels = labels[::viz_downsample]
 
-    fig = plt.figure(figsize=(15, 10))
-    ax = fig.add_subplot(111, projection='3d')
-
     if verbose:
         print(f"Plotting {len(viz_coords):,} points...")
+
+    fig = go.Figure()
 
     noise_mask = viz_labels == -1
     cluster_mask = viz_labels >= 0
 
+    # Noise = black
     if np.any(noise_mask):
-        ax.scatter(viz_coords[noise_mask, 0], 
-                viz_coords[noise_mask, 1], 
-                viz_coords[noise_mask, 2],
-                c='black', s=0.5, alpha=0.3, label='Noise')
+        fig.add_trace(go.Scatter3d(
+            x=viz_coords[noise_mask, 0],
+            y=viz_coords[noise_mask, 1],
+            z=viz_coords[noise_mask, 2],
+            mode='markers',
+            marker=dict(size=1, color='black', opacity=0.3),
+            name='Noise',
+            hovertemplate='<b>Noise</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+        ))
 
+    # Clusters = colored
     if np.any(cluster_mask):
-        scatter = ax.scatter(viz_coords[cluster_mask, 0], 
-                            viz_coords[cluster_mask, 1], 
-                            viz_coords[cluster_mask, 2],
-                            c=viz_labels[cluster_mask],
-                            cmap='Spectral',
-                            s=1,
-                            alpha=0.6)
-        plt.colorbar(scatter, ax=ax, label='Cluster ID', shrink=0.5)
+        fig.add_trace(go.Scatter3d(
+            x=viz_coords[cluster_mask, 0],
+            y=viz_coords[cluster_mask, 1],
+            z=viz_coords[cluster_mask, 2],
+            mode='markers',
+            marker=dict(
+                size=1,
+                color=viz_labels[cluster_mask],
+                colorscale='Spectral',
+                opacity=0.6,
+                colorbar=dict(title="Cluster ID", thickness=15)
+            ),
+            name=' ',
+            hovertemplate='<b>Cluster %{marker.color}</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+        ))
 
-    ax.set_xlabel('X (mm)')
-    ax.set_ylabel('Y (mm)')
-    ax.set_zlabel('Z (Layer * 0.01)')
-    ax.set_title(f'DBSCAN of AMPM Data\n{n_clusters} clusters, {len(coords_3d):,} total points')
+    fig.update_layout(
+        title=f'DBSCAN of AMPM Data<br>{n_clusters} clusters, {len(coords_3d):,} total points',
+        scene=dict(
+            xaxis_title='X (mm)',
+            yaxis_title='Y (mm)',
+            zaxis_title='Z (Layer * 0.01)',
+            aspectmode='manual',
+            aspectratio=dict(x=1, y=1, z=1)  # Force 3D display to be a box
+        ),
+        width=1200,
+        height=900,
+        showlegend=True
+    )
 
-    plt.tight_layout()
-    plt.show()
+    fig.show()
 
     # Save results
     if verbose:
