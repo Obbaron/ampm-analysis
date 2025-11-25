@@ -15,7 +15,8 @@ def cluster_data(data : list[np.ndarray],
                  min_samples : int = 50,
                  layers_per_chunk : int = 10,
                  overlap_layers : int = 2,
-                 verbose : bool = True
+                 verbose : bool = True,
+                 visualize : bool = False
                  ):
     
     all_data = np.vstack(data)
@@ -173,66 +174,67 @@ def cluster_data(data : list[np.ndarray],
         print(f"Total noise points: {n_noise_total:,} ({100*n_noise_total/len(labels):.2f}%)")
         print(f"Total clustered points: {np.sum(labels >= 0):,} ({100*np.sum(labels >= 0)/len(labels):.2f}%)")
 
-    # VISUALISATION
-    if verbose:
-        print("\nPreparing visualization...")
-    viz_downsample = max(1, len(coords_3d) // 50000)  # Max 50k points
-    viz_coords = coords_3d[::viz_downsample]
-    viz_labels = labels[::viz_downsample]
+    # VISUALIZATION
+    if visualize:
+        if verbose:
+            print("\nPreparing visualization...")
+        viz_downsample = max(1, len(coords_3d) // 50000)  # Max 50k points
+        viz_coords = coords_3d[::viz_downsample]
+        viz_labels = labels[::viz_downsample]
 
-    if verbose:
-        print(f"Plotting {len(viz_coords):,} points...")
+        if verbose:
+            print(f"Plotting {len(viz_coords):,} points...")
 
-    fig = go.Figure()
+        fig = go.Figure()
 
-    noise_mask = viz_labels == -1
-    cluster_mask = viz_labels >= 0
+        noise_mask = viz_labels == -1
+        cluster_mask = viz_labels >= 0
 
-    # Noise = black
-    if np.any(noise_mask):
-        fig.add_trace(go.Scatter3d(
-            x=viz_coords[noise_mask, 0],
-            y=viz_coords[noise_mask, 1],
-            z=viz_coords[noise_mask, 2],
-            mode='markers',
-            marker=dict(size=1, color='black', opacity=0.3),
-            name='Noise',
-            hovertemplate='<b>Noise</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
-        ))
+        # Noise = black
+        if np.any(noise_mask):
+            fig.add_trace(go.Scatter3d(
+                x=viz_coords[noise_mask, 0],
+                y=viz_coords[noise_mask, 1],
+                z=viz_coords[noise_mask, 2],
+                mode='markers',
+                marker=dict(size=1, color='black', opacity=0.3),
+                name='Noise',
+                hovertemplate='<b>Noise</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+            ))
 
-    # Clusters = colored
-    if np.any(cluster_mask):
-        fig.add_trace(go.Scatter3d(
-            x=viz_coords[cluster_mask, 0],
-            y=viz_coords[cluster_mask, 1],
-            z=viz_coords[cluster_mask, 2],
-            mode='markers',
-            marker=dict(
-                size=1,
-                color=viz_labels[cluster_mask],
-                colorscale='Spectral',
-                opacity=0.6,
-                colorbar=dict(title="Cluster ID", thickness=15)
+        # Clusters = colored
+        if np.any(cluster_mask):
+            fig.add_trace(go.Scatter3d(
+                x=viz_coords[cluster_mask, 0],
+                y=viz_coords[cluster_mask, 1],
+                z=viz_coords[cluster_mask, 2],
+                mode='markers',
+                marker=dict(
+                    size=1,
+                    color=viz_labels[cluster_mask],
+                    colorscale='Spectral',
+                    opacity=0.6,
+                    colorbar=dict(title="Cluster ID", thickness=15)
+                ),
+                name=' ',
+                hovertemplate='<b>Cluster %{marker.color}</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+            ))
+
+        fig.update_layout(
+            title=f'DBSCAN of AMPM Data<br>{n_clusters} clusters, {len(coords_3d):,} total points',
+            scene=dict(
+                xaxis_title='X (mm)',
+                yaxis_title='Y (mm)',
+                zaxis_title='Z (Layer * 0.01)',
+                aspectmode='manual',
+                aspectratio=dict(x=1, y=1, z=1)  # Force 3D display to be a box
             ),
-            name=' ',
-            hovertemplate='<b>Cluster %{marker.color}</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
-        ))
+            width=1200,
+            height=900,
+            showlegend=True
+        )
 
-    fig.update_layout(
-        title=f'DBSCAN of AMPM Data<br>{n_clusters} clusters, {len(coords_3d):,} total points',
-        scene=dict(
-            xaxis_title='X (mm)',
-            yaxis_title='Y (mm)',
-            zaxis_title='Z (Layer * 0.01)',
-            aspectmode='manual',
-            aspectratio=dict(x=1, y=1, z=1)  # Force 3D display to be a box
-        ),
-        width=1200,
-        height=900,
-        showlegend=True
-    )
-
-    fig.show()
+        fig.show()
 
     # Save results
     if verbose:
@@ -305,8 +307,8 @@ def cluster_data(data : list[np.ndarray],
 
 data_list = import_ampm_data(filepath=data_directory,
                             start_layer=101,
-                            end_layer=150  # CHANGE TO 400 LATER
+                            end_layer=150
                             )
             
             
-cluster_data(data_list)
+cluster_data(data_list, verbose=True, visualize=True)
