@@ -7,8 +7,21 @@ import logging
 
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO, format='%(message)s')
 
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_formatter = logging.Formatter('%(message)s')
+console_handler.setFormatter(console_formatter)
+logger.addHandler(console_handler)
+
+file_handler = logging.FileHandler('clustering.log', mode='w')
+file_handler.setLevel(logging.INFO)
+file_formatter = logging.Formatter('%(asctime)s - %(message)s')
+file_handler.setFormatter(file_formatter)
+logger.addHandler(file_handler)
+
+logger.setLevel(logging.INFO)
+logger.propagate = False
 
 data_directory = Path.cwd()/'JR265_AMPM'/'Spectral.ExportPackets.20251001-123012.386 (579d0101-046b-4142-bce7-5d3f82867967)'
 parts_file = Path.cwd()/'JR265_AMPM'/'JR265_AMPM_parameters_all(fresh).csv'
@@ -25,22 +38,27 @@ def cluster_data(data : list[np.ndarray],
                  visualize : bool = False
                  ) -> np.ndarray:
     
+    console_handler = [h for h in logger.handlers if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)][0]
+    if verbose:
+        console_handler.setLevel(logging.INFO)
+    else:
+        console_handler.setLevel(logging.ERROR)
+    
     all_data = np.vstack(data)
 
     coords_3d = np.column_stack([
         all_data[:, 3],  # X
         all_data[:, 4],  # Y
-        all_data[:, 0] * layer_spacing
+        all_data[:, 0] * layer_spacing # Layer * spacing
     ])
 
-    if verbose:
-        logger.info("\n")
-        logger.info(f"Total data points: {coords_3d.shape[0]}")
-        logger.info(f"Coordinate ranges:")
-        logger.info(f"  X: [{coords_3d[:, 0].min():.2f}, {coords_3d[:, 0].max():.2f}]")
-        logger.info(f"  Y: [{coords_3d[:, 1].min():.2f}, {coords_3d[:, 1].max():.2f}]")
-        logger.info(f"  Z: [{coords_3d[:, 2].min():.2f}, {coords_3d[:, 2].max():.2f}]\n")
-        logger.info("Performing chunked 3D clustering across all layers...")
+    logger.info("INITIALIZING CLUSTERING")
+    logger.info(f"Total data points: {coords_3d.shape[0]}")
+    logger.info(f"Coordinate ranges:")
+    logger.info(f"  X: [{coords_3d[:, 0].min():.2f}, {coords_3d[:, 0].max():.2f}]")
+    logger.info(f"  Y: [{coords_3d[:, 1].min():.2f}, {coords_3d[:, 1].max():.2f}]")
+    logger.info(f"  Z: [{coords_3d[:, 2].min():.2f}, {coords_3d[:, 2].max():.2f}]\n")
+    logger.info("Performing chunked 3D clustering across all layers...")
 
     # DBSCAN parameters
     eps_xy = 0.25  # Distance threshold in XY plane (mm)
@@ -51,19 +69,17 @@ def cluster_data(data : list[np.ndarray],
 
     eps_3d = np.sqrt(eps_xy**2 + eps_z**2)
 
-    if verbose:
-        logger.info("Clustering parameters:")
-        logger.info(f"  eps (XY): {eps_xy} mm")
-        logger.info(f"  eps (Z): {eps_z} (layer * {layer_spacing})")
-        logger.info(f"  Effective 3D eps: {eps_3d:.3f}")
-        logger.info(f"  min_samples: {min_samples}")
+    logger.info("Clustering parameters:")
+    logger.info(f"  eps (XY): {eps_xy} mm")
+    logger.info(f"  eps (Z): {eps_z} (layer * {layer_spacing})")
+    logger.info(f"  Effective 3D eps: {eps_3d:.3f}")
+    logger.info(f"  min_samples: {min_samples}\n")
 
     unique_layers = np.unique(all_data[:, 0])
     n_layers = len(unique_layers)
 
-    if verbose:
-        logger.info(f"Processing {n_layers} layers in chunks of {layers_per_chunk} with {overlap_layers} layer overlap...\n")
-        chunk_num = 0
+    logger.info(f"Processing {n_layers} layers in chunks of {layers_per_chunk} with {overlap_layers} layer overlap...\n")
+    chunk_num = 0
 
     labels = np.full(len(all_data), -1, dtype=int)
     global_cluster_id = 0
@@ -73,8 +89,7 @@ def cluster_data(data : list[np.ndarray],
         chunk_layers = unique_layers[chunk_start:chunk_end]
         
         if chunk_start > 0 and chunk_end <= chunk_start + overlap_layers:
-            if verbose:
-                logger.info(f"Skipping redundant chunk: Layers {int(chunk_layers[0])}-{int(chunk_layers[-1])} (entirely overlap)")
+            logger.info(f"Skipping redundant chunk: Layers {int(chunk_layers[0])}-{int(chunk_layers[-1])} (entirely overlap)")
             continue
         
         chunk_mask = np.isin(all_data[:, 0], chunk_layers)
@@ -82,8 +97,7 @@ def cluster_data(data : list[np.ndarray],
         chunk_indices = np.where(chunk_mask)[0]
         chunk_num += 1
         
-        if verbose:
-            logger.info(f"Chunk {chunk_num}: Layers {int(chunk_layers[0])}-{int(chunk_layers[-1])} ({len(chunk_coords):,} points)")
+        logger.info(f"Chunk {chunk_num}: Layers {int(chunk_layers[0])}-{int(chunk_layers[-1])} ({len(chunk_coords):,} points)...")
         
         # CLUSTER CHUNK
         clustering = DBSCAN(eps=eps_3d, min_samples=min_samples)
@@ -92,8 +106,7 @@ def cluster_data(data : list[np.ndarray],
         n_clusters_chunk = len(set(chunk_labels)) - (1 if -1 in chunk_labels else 0)
         n_noise_chunk = list(chunk_labels).count(-1)
         
-        if verbose:
-            logger.info(f"  Found {n_clusters_chunk} clusters, {n_noise_chunk:,} noise points")
+        logger.info(f"  Found {n_clusters_chunk} clusters, {n_noise_chunk:,} noise points")
         
         # For non-overlapping region, assign new global cluster IDs
         if chunk_start == 0:
@@ -109,10 +122,9 @@ def cluster_data(data : list[np.ndarray],
             overlap_mask = (all_data[chunk_indices, 0] >= overlap_layer_start) & \
                         (all_data[chunk_indices, 0] <= overlap_layer_end)
             
-            if verbose:
-                logger.info(f"  Overlap region: layers {int(overlap_layer_start)}-{int(overlap_layer_end)}")
-                logger.info(f"  Points in overlap: {overlap_mask.sum():,}")
-                logger.info(f"  Points in non-overlap: {(~overlap_mask).sum():,}")
+            logger.info(f"  Overlap region: layers {int(overlap_layer_start)}-{int(overlap_layer_end)}")
+            logger.info(f"  Points in overlap: {overlap_mask.sum():,}")
+            logger.info(f"  Points in non-overlap: {(~overlap_mask).sum():,}")
             
             # Match clusters in overlap region
             for new_cluster_id in range(n_clusters_chunk):
@@ -154,23 +166,38 @@ def cluster_data(data : list[np.ndarray],
     n_clusters = len(unique_clusters)
     n_noise_total = np.sum(labels == -1)
 
-    if verbose:
-        logger.info("\n")
-        logger.info("CLUSTERING COMPLETE")
-        logger.info(f"Total clusters: {n_clusters}")
-        logger.info(f"Total noise points: {n_noise_total:,} ({100*n_noise_total/len(labels):.2f}%)")
-        logger.info(f"Total clustered points: {np.sum(labels >= 0):,} ({100*np.sum(labels >= 0)/len(labels):.2f}%)\n")
+    logger.info("\n")
+    logger.info("CLUSTERING COMPLETE")
+    logger.info(f"Total clusters: {n_clusters}")
+    logger.info(f"Total noise points: {n_noise_total:,} ({100*n_noise_total/len(labels):.2f}%)")
+    logger.info(f"Total clustered points: {np.sum(labels >= 0):,} ({100*np.sum(labels >= 0)/len(labels):.2f}%)\n")
 
+    all_data = np.column_stack([all_data, labels])
+    
+    # REPORT
+    unique_layers = np.unique(all_data[:,0])
+    for layer in unique_layers:
+        layer_mask = all_data[:,0] == layer
+        layer_labels = labels[layer_mask]
+        n_noise = np.sum(layer_labels == -1)
+        n_clusters_in_layer = len(set(layer_labels[layer_labels >= 0]))
+        logger.info(f"  Layer {int(layer)}: {n_clusters_in_layer} clusters, {n_noise:,} noise points")
+        valid_clusters = labels[labels >= 0]
+        
+    if len(valid_clusters) > 0:
+        unique_clusters, cluster_counts = np.unique(valid_clusters, return_counts=True)
+        
+        logger.info(" ")
+        logger.info(f"Mean cluster size: {cluster_counts.mean():,} points")
+        logger.info(f"Median cluster size: {np.median(cluster_counts):,} points")
+        logger.info(f"Largest cluster: {cluster_counts.max():,} points")
+        logger.info(f"Smallest cluster: {cluster_counts.min():,} points")
+    
     # VISUALIZATION
     if visualize:
-        if verbose:
-            logger.info("Preparing visualization...")
         viz_downsample = max(1, len(coords_3d) // 50000)  # Plot ~50k points
         viz_coords = coords_3d[::viz_downsample]
         viz_labels = labels[::viz_downsample]
-
-        if verbose:
-            logger.info(f"Plotting {len(viz_coords):,} points...")
 
         fig = go.Figure()
 
@@ -214,7 +241,7 @@ def cluster_data(data : list[np.ndarray],
                 yaxis_title='Y (mm)',
                 zaxis_title=f'Z (Layer * {layer_spacing})',
                 aspectmode='manual',
-                aspectratio=dict(x=1, y=1, z=1)  # Force 3D display to be a box
+                aspectratio=dict(x=1, y=1, z=1)  # Force 1:1:1
             ),
             width=1280,
             height=720,
@@ -222,8 +249,6 @@ def cluster_data(data : list[np.ndarray],
         )
 
         fig.show()
-
-    all_data = np.column_stack([all_data, labels])
     
     return all_data
 
@@ -233,4 +258,4 @@ data = import_ampm_data(filepath=data_directory,
                         end_layer=150
                         )
 
-data = cluster_data(data, verbose=True, visualize=True)
+data = cluster_data(data, visualize=True)
