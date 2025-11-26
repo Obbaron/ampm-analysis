@@ -1,24 +1,25 @@
 from pathlib import Path
 import numpy as np
+import pandas as pd
 from sklearn.cluster import DBSCAN
 import plotly.graph_objects as go
-from ampm import import_ampm_data
+from ampm import import_ampm_data, get_parts
 import logging
 
 
 logger = logging.getLogger(__name__)
 
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
+console_logger = logging.StreamHandler()
+console_logger.setLevel(logging.INFO)
 console_formatter = logging.Formatter('%(message)s')
-console_handler.setFormatter(console_formatter)
-logger.addHandler(console_handler)
+console_logger.setFormatter(console_formatter)
+logger.addHandler(console_logger)
 
-file_handler = logging.FileHandler('clustering.log', mode='w')
-file_handler.setLevel(logging.INFO)
+file_logger = logging.FileHandler('clustering.log', mode='w')
+file_logger.setLevel(logging.INFO)
 file_formatter = logging.Formatter('%(asctime)s - %(message)s')
-file_handler.setFormatter(file_formatter)
-logger.addHandler(file_handler)
+file_logger.setFormatter(file_formatter)
+logger.addHandler(file_logger)
 
 logger.setLevel(logging.INFO)
 logger.propagate = False
@@ -28,31 +29,57 @@ parts_file = Path.cwd()/'JR265_AMPM'/'JR265_AMPM_parameters_all(fresh).csv'
 
 
 def cluster_data(data : list[np.ndarray],
-                 eps_xy : float = 0.25,
-                 eps_z : float = 0.05,
-                 min_samples : int = 50,
+                 eps : float = 0.15,
+                 min_samples : int = 20,
                  layers_per_chunk : int = 10,
                  overlap_layers : int = 2,
                  layer_spacing : float = 0.01,
                  verbose : bool = True,
                  visualize : bool = False
                  ) -> np.ndarray:
+    """
+    Groups AMPM data into clusters using a chunked 3D DBSCAN
     
-    console_handler = [h for h in logger.handlers if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)][0]
+    Parameters:
+    -----------
+    data : list[np.ndarray]
+        Output from import_data with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID
+    eps : float
+        Max distance between two samples for one to be considered as in the neighborhood of the other
+    min_samples : int
+        Number of samples in a neighborhood for a point to be considered a core point
+    layers_per_chunk : int
+        Layers are processed in chunks to limit memory requirements (default: 10)
+    overlap_layers : int
+        Number of overlapping layers at chunk boundary to maintain Z continuity (default: 2)
+    layer_spacing : float
+        Z coords = layer number * layer spacing (default: 0.01)
+    verbose : bool
+        Set to False to silence console output (default: True)
+    visualize : bool
+        Set to True to see a decimated 3D scatter plot after cluserting (default: False)
+        
+    Returns:
+    --------
+    np.ndarray
+        Data with ClusterID labels (noise = -1)
+    """
+    
+    console_logger = [h for h in logger.handlers if isinstance(h, logging.StreamHandler) and not isinstance(h, logging.FileHandler)][0]
     if verbose:
-        console_handler.setLevel(logging.INFO)
+        console_logger.setLevel(logging.INFO)
     else:
-        console_handler.setLevel(logging.ERROR)
+        console_logger.setLevel(logging.ERROR)
     
     all_data = np.vstack(data)
 
     coords_3d = np.column_stack([
         all_data[:, 3],  # X
         all_data[:, 4],  # Y
-        all_data[:, 0] * layer_spacing # Layer * spacing
+        all_data[:, 0] * layer_spacing # Z
     ])
 
-    logger.info("INITIALIZING CLUSTERING")
+    logger.info("INITIALIZING CLUSTERING...")
     logger.info(f"Total data points: {coords_3d.shape[0]}")
     logger.info(f"Coordinate ranges:")
     logger.info(f"  X: [{coords_3d[:, 0].min():.2f}, {coords_3d[:, 0].max():.2f}]")
@@ -60,20 +87,10 @@ def cluster_data(data : list[np.ndarray],
     logger.info(f"  Z: [{coords_3d[:, 2].min():.2f}, {coords_3d[:, 2].max():.2f}]\n")
     logger.info("Performing chunked 3D clustering across all layers...")
 
-    # DBSCAN parameters
-    eps_xy = 0.25  # Distance threshold in XY plane (mm)
-    eps_z = 0.05  # Distance threshold in Z direction (layer * spacing)
-    min_samples = 50  # Minimum points to form a cluster
-    layers_per_chunk = 10
-    overlap_layers = 2
-
-    eps_3d = np.sqrt(eps_xy**2 + eps_z**2)
-
     logger.info("Clustering parameters:")
-    logger.info(f"  eps (XY): {eps_xy} mm")
-    logger.info(f"  eps (Z): {eps_z} (layer * {layer_spacing})")
-    logger.info(f"  Effective 3D eps: {eps_3d:.3f}")
-    logger.info(f"  min_samples: {min_samples}\n")
+    logger.info(f"  eps (XY): {eps} mm")
+    logger.info(f"  min_samples: {min_samples}")
+    logger.info(f"  Layer spacing: layer * {layer_spacing}\n")
 
     unique_layers = np.unique(all_data[:, 0])
     n_layers = len(unique_layers)
@@ -99,8 +116,7 @@ def cluster_data(data : list[np.ndarray],
         
         logger.info(f"Chunk {chunk_num}: Layers {int(chunk_layers[0])}-{int(chunk_layers[-1])} ({len(chunk_coords):,} points)...")
         
-        # CLUSTER CHUNK
-        clustering = DBSCAN(eps=eps_3d, min_samples=min_samples)
+        clustering = DBSCAN(eps=eps, min_samples=min_samples)
         chunk_labels = clustering.fit_predict(chunk_coords)
         
         n_clusters_chunk = len(set(chunk_labels)) - (1 if -1 in chunk_labels else 0)
@@ -253,9 +269,105 @@ def cluster_data(data : list[np.ndarray],
     return all_data
 
 
+def assign_parts(clustered_data: np.ndarray, parts_df) -> np.ndarray:
+    """
+    Reassign cluster labels to Part IDs based on spatial matching.
+    
+    Parameters:
+    -----------
+    clustered_data : np.ndarray
+        Output from cluster_data with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID
+    parts_df : pd.DataFrame
+        DataFrame with columns: Part ID, Layer Thickness, X position, Y Position, Layers count
+        
+    Returns:
+    --------
+    np.ndarray
+        Data with ClusterID column replaced by Part ID
+    """
+    
+    # Extract cluster labels (last column)
+    cluster_labels = clustered_data[:, -1].astype(int)
+    
+    # Get unique clusters (excluding noise if present)
+    unique_clusters = np.unique(cluster_labels[cluster_labels >= 0])
+    n_clusters = len(unique_clusters)
+    n_parts = len(parts_df)
+    
+    logger.info("\n")
+    logger.info(f"ASSIGNING PARTS TO CLUSTERS...")
+    logger.info(f"Found {n_clusters} clusters")
+    logger.info(f"Found {n_parts} parts in DataFrame")
+    
+    # Check for mismatch
+    if n_clusters != n_parts:
+        logger.error(f"MISMATCH: Number of clusters ({n_clusters}) does not match number of parts ({n_parts})")
+        raise ValueError(f"Cluster-Part mismatch: {n_clusters} clusters vs {n_parts} parts")
+    
+    # Create mapping from cluster ID to Part ID
+    cluster_to_part_map = {}
+    
+    # For each part, find which cluster it belongs to
+    for idx, part_row in parts_df.iterrows():
+        part_id = part_row['Part ID']
+        part_x = float(part_row['X Position'])
+        part_y = float(part_row['Y Position'])
+        
+        # Find which cluster contains this part's (X, Y) position
+        matched_cluster = None
+        
+        for cluster_id in unique_clusters:
+            # Get all points in this cluster
+            cluster_mask = cluster_labels == cluster_id
+            cluster_points = clustered_data[cluster_mask]
+            
+            # Get X, Y coordinates (columns 3 and 4)
+            cluster_x = cluster_points[:, 3]
+            cluster_y = cluster_points[:, 4]
+            
+            # Check if part position falls within cluster bounds
+            x_min, x_max = cluster_x.min(), cluster_x.max()
+            y_min, y_max = cluster_y.min(), cluster_y.max()
+            
+            if x_min <= part_x <= x_max and y_min <= part_y <= y_max:
+                matched_cluster = cluster_id
+                break
+        
+        if matched_cluster is None:
+            logger.warning(f"  Part {part_id} at ({part_x:.2f}, {part_y:.2f}) does not fall within any cluster bounds")
+        else:
+            cluster_to_part_map[matched_cluster] = part_id
+            logger.info(f"  Cluster {matched_cluster} → Part {part_id}")
+    
+    # Check if all clusters were mapped
+    if len(cluster_to_part_map) != n_clusters:
+        logger.error(f"MAPPING ERROR: Only {len(cluster_to_part_map)} of {n_clusters} clusters were mapped to parts")
+        raise ValueError(f"Could not map all clusters to parts")
+    
+    # Remap cluster labels to Part IDs
+    new_labels = cluster_labels.copy()
+    for cluster_id, part_id in cluster_to_part_map.items():
+        new_labels[cluster_labels == cluster_id] = part_id
+    
+    # Replace last column with new Part ID labels
+    result_data = clustered_data.copy()
+    result_data[:, -1] = new_labels
+    
+    logger.info("\n")
+    logger.info("ASSIGNING COMPLETE")
+    logger.info(f"Successfully remapped {n_clusters} clusters to Part IDs\n")
+    
+    return result_data
+
+
 data = import_ampm_data(filepath=data_directory,
                         start_layer=101,
                         end_layer=150
                         )
 
-data = cluster_data(data, visualize=True)
+data = cluster_data(data)
+
+output = assign_parts(data, (get_parts(parts_file)))
+
+output = np.unique(output[:,-1])
+print(output)
