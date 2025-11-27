@@ -30,9 +30,9 @@ parts_file = Path.cwd()/'JR265_AMPM'/'JR265_AMPM_parameters_all(fresh).csv'
 
 
 def cluster_data(data : list[np.ndarray],
-                 eps_xy : float = 0.10,
-                 eps_z : float = 0.10,
-                 min_samples : int = 20,
+                 eps_xy : float = 0.135,
+                 eps_z : float = 0.135,
+                 min_samples : int = 50,
                  layers_per_chunk : int = 10,
                  overlap_layers : int = 2,
                  layer_spacing : float = 0.03,
@@ -262,9 +262,9 @@ def cluster_data(data : list[np.ndarray],
     return all_data
 
 
-def assign_parts(clustered_data: np.ndarray, parts_df: pd.DataFrame) -> np.ndarray:
+def assign_parts(clustered_data: np.ndarray, parts_df: pd.DataFrame, save_file: bool = True) -> np.ndarray:
     """
-    Reassign cluster labels to Part IDs based on spatial matching.
+    Reassign ClusterIDs to PartIDs based on spatial matching.
     
     Parameters:
     -----------
@@ -272,6 +272,8 @@ def assign_parts(clustered_data: np.ndarray, parts_df: pd.DataFrame) -> np.ndarr
         Output from cluster_data() with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID
     parts_df : pd.DataFrame
         Output from get_parts() with columns: Part ID, Layer Thickness, X position, Y Position, Layers count
+    save_file : bool, optional
+        Set to False to not generate .npy of part-assigned array (default: True)
         
     Returns:
     --------
@@ -325,7 +327,7 @@ def assign_parts(clustered_data: np.ndarray, parts_df: pd.DataFrame) -> np.ndarr
             logger.info(f"  Cluster {matched_cluster} → Part {part_id}")
     
     if len(cluster_to_part_map) != n_clusters:
-        logger.error(f"MAPPING ERROR: Only {len(cluster_to_part_map)} of {n_clusters} clusters were mapped to parts")
+        logger.error(f"MAPPING ERROR: Only {len(cluster_to_part_map)} of {n_clusters} clusters were mapped to parts\n")
         raise ValueError(f"Could not map all clusters to parts")
     
     new_labels = cluster_labels.copy()
@@ -339,15 +341,111 @@ def assign_parts(clustered_data: np.ndarray, parts_df: pd.DataFrame) -> np.ndarr
     logger.info("ASSIGNING COMPLETE")
     logger.info(f"Successfully remapped {n_clusters} clusters to Part IDs\n")
     
+    if save_file:
+        logger.info("Saving part assigned data...")
+        np.save('ampm_part_assigned.npy', result_data)
+        logger.info("Saved to: ampm_part_assigned.npy")
+        logger.info("  Columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, PartID\n")
+    
     return result_data
+
+
+def find_neighbors(data: list[np.ndarray], k: int = 5, layer_spacing: float = 0.03) -> None:
+    """
+    Plot k-distance graph to help determine optimal eps parameter for DBSCAN.
+    
+    The k-distance graph shows the distance to the k-th nearest neighbor for each point.
+    The "knee" in the curve suggests a good eps value.
+    
+    Parameters:
+    -----------
+    data : list[np.ndarray]
+        Output from import_ampm_data with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool
+    k : int, optional
+        Number of nearest neighbors to consider (should match min_samples in DBSCAN) (default: 5)
+    layer_spacing : float, optional
+        Z coords = layer number * layer spacing (default: 0.03)
+        
+    Returns:
+    --------
+    None
+        Displays interactive plotly graph
+    """
+    
+    logger.info("\n")
+    logger.info("COMPUTING K-DISTANCE GRAPH...")
+    logger.info(f"k-neighbors: {k}")
+    
+    all_data = np.vstack(data)
+    
+    coords_3d = np.column_stack([
+        all_data[:, 3],  # X
+        all_data[:, 4],  # Y
+        all_data[:, 0] * layer_spacing  # Z
+    ])
+    
+    logger.info(f"Total points: {len(coords_3d):,}")
+    
+    logger.info("Fitting NearestNeighbors model...")
+    nbrs = NearestNeighbors(n_neighbors=k)
+    nbrs.fit(coords_3d)
+    
+    logger.info(f"Computing distances to {k}th nearest neighbor...")
+    distances, indices = nbrs.kneighbors(coords_3d)
+    
+    k_distances = distances[:, -1]
+    
+    k_distances_sorted = np.sort(k_distances)
+    
+    logger.info(f"Distance range: [{k_distances_sorted.min():.4f}, {k_distances_sorted.max():.4f}]")
+    logger.info(f"Median distance: {np.median(k_distances_sorted):.4f}")
+    logger.info(f"Mean distance: {np.mean(k_distances_sorted):.4f}")
+    
+    fig = go.Figure()
+    
+    fig.add_trace(go.Scatter(
+        x=np.arange(len(k_distances_sorted)),
+        y=k_distances_sorted,
+        mode='lines',
+        line=dict(color='blue', width=1),
+        name=f'{k}-distance'
+    ))
+    
+    fig.add_hline(
+        y=np.median(k_distances_sorted),
+        line_dash="dash",
+        line_color="red",
+        annotation_text=f"Median: {np.median(k_distances_sorted):.4f}",
+        annotation_position="right"
+    )
+    
+    fig.update_layout(
+        title=f'K-Distance Graph (k={k})',
+        xaxis_title='Points (sorted by distance)',
+        yaxis_title=f'Distance to {k}th Nearest Neighbor',
+        width=1280,
+        height=720,
+        hovermode='closest'
+    )
+    
+    logger.info("\nDisplaying k-distance graph...")
+    logger.info("TIP: The 'elbow' or knee in the curve suggests a good eps value\n")
+    
+    fig.show()
+
 
 
 data = import_ampm_data(filepath=data_directory,
                         start_layer=101,
-                        end_layer=125
+                        end_layer=150
                         )
 
+
+#find_neighbors(data,k=50)
+
 data = cluster_data(data)
+parts = get_parts(parts_file)
 
-output = assign_parts(data, (get_parts(parts_file)))
+output = assign_parts(data, parts)
 
+# Layer, Time, Dwell, X, Y, Plasma, Meltpool, PartID
