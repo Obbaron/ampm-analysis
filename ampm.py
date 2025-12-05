@@ -1,9 +1,12 @@
 from pathlib import Path
 import numpy as np
 import pandas as pd
+from scipy.stats import gaussian_kde, linregress
 from sklearn.cluster import DBSCAN
 from sklearn.neighbors import NearestNeighbors
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import tkinter as tk
 import logging
 
 
@@ -37,8 +40,8 @@ def import_ampm_data(filepath: str | Path,
     """
     Import AMPM data from region of interest: [Layer, Time, Dwell, X, Y, Plasma, Meltpool]
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     filepath : str or Path
         Directory path containing the data files
     start_layer : int
@@ -60,8 +63,8 @@ def import_ampm_data(filepath: str | Path,
     return_dict : bool, optional
         If True, return dict with layer number as keys (default: False)
     
-    Returns:
-    --------
+    Returns
+    -------
     list or dict
         List of numpy arrays (dict if return_dict=True), one array per layer
         Each array has 7 columns: [layer, time, duration, x, y, plasma, meltpool]
@@ -102,21 +105,19 @@ def import_ampm_data(filepath: str | Path,
             continue
         
         try:
-            layer_data = pd.read_csv(
-                full_path,
-                sep='\t',
-                usecols=([0, 1, 2, 3, 5, 6]), # Skips LaserVIEW
-                on_bad_lines='warn'
-            )
+            layer_data = pd.read_csv(full_path,
+                                     sep='\t',
+                                     usecols=([0, 1, 2, 3, 5, 6]), # Skips LaserVIEW
+                                     on_bad_lines='warn'
+                                     )
             
             layer_array = layer_data.to_numpy()
             
-            locations = (
-                (layer_array[:, 2] > x_min) & 
-                (layer_array[:, 2] < x_max) &
-                (layer_array[:, 3] > y_min) & 
-                (layer_array[:, 3] < y_max)
-            )
+            locations = ((layer_array[:, 2] > x_min) & 
+                         (layer_array[:, 2] < x_max) &
+                         (layer_array[:, 3] > y_min) & 
+                         (layer_array[:, 3] < y_max)
+                         )
             
             filtered_data = layer_array[locations, :]
             
@@ -144,15 +145,15 @@ def get_parts(filepath : str | Path, parametric : bool = False) -> pd.DataFrame:
     """
     Create a pandas DataFrame from parts data exported from QuantAM (.csv)
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
     filepath : str or Path
         Filepath to parts data file (.csv)
     parametric : bool, optional
         Include Hatch Power, Hatch Point Distance, Hatch Exposure Time (default: False)
 
-    Returns:
-    --------
+    Returns
+    -------
     pd.DataFrame
         DataFrame of [Part ID, Layer Thickness, X Position, Y Position, Layers Count]
         Optionally include [Hatch Power, Hatch Point Distance, Hatch Exposure Time]
@@ -163,12 +164,12 @@ def get_parts(filepath : str | Path, parametric : bool = False) -> pd.DataFrame:
         raise FileNotFoundError(f"File not found: {filepath}")
 
     parts_data = pd.read_csv(filepath,
-                    usecols=[1,3,4,5,6],
-                    names=['Part ID','Layer Thickness','X Position','Y Position','Layers Count'],
-                    skiprows=6,
-                    on_bad_lines='skip',
-                    skip_blank_lines=True
-                    )
+                             usecols=[1,3,4,5,6],
+                             names=['Part ID','Layer Thickness','X Position','Y Position','Layers Count'],
+                             skiprows=6,
+                             on_bad_lines='skip',
+                             skip_blank_lines=True
+                             )
     
     if 'Tab - 10' in parts_data['Part ID'].values:
         parametric_possible = True
@@ -193,12 +194,12 @@ def get_parts(filepath : str | Path, parametric : bool = False) -> pd.DataFrame:
         skipped_rows = len(parts_idx) + 10
 
         first_col = pd.read_csv(filepath,
-                            usecols=[1],
-                            names=['Part ID'],
-                            skiprows=skipped_rows,
-                            on_bad_lines='skip',
-                            skip_blank_lines=True
-                            )
+                                usecols=[1],
+                                names=['Part ID'],
+                                skiprows=skipped_rows,
+                                on_bad_lines='skip',
+                                skip_blank_lines=True
+                                )
 
         full_parts_list = []
         for value in first_col['Part ID']:
@@ -215,13 +216,13 @@ def get_parts(filepath : str | Path, parametric : bool = False) -> pd.DataFrame:
             skipped_rows = 9 * (len(full_parts_list) + 4) + (len(parts_idx) + 10) 
 
         parts_params = pd.read_csv(filepath,
-                            usecols=[7,9,10],
-                            names=['Power','Point Distance','Exposure Time'],
-                            skiprows=skipped_rows,
-                            nrows=(len(parts_idx)),
-                            on_bad_lines='skip',
-                            skip_blank_lines=True
-                            )
+                                   usecols=[7,9,10],
+                                   names=['Hatch Power','Hatch Point Distance','Hatch Exposure Time'],
+                                   skiprows=skipped_rows,
+                                   nrows=(len(parts_idx)),
+                                   on_bad_lines='skip',
+                                   skip_blank_lines=True
+                                   )
         
         parts_data = pd.concat([parts_data,parts_params],axis=1)
         
@@ -244,8 +245,8 @@ def cluster_data(data : list[np.ndarray],
     """
     Groups AMPM data into clusters using a chunked 3D DBSCAN
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     data : list[np.ndarray]
         Output from import_data with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID
     eps_xy : float, optional
@@ -265,8 +266,8 @@ def cluster_data(data : list[np.ndarray],
     visualize : bool, optional
         Set to True to see a decimated 3D scatter plot after cluserting (default: False)
         
-    Returns:
-    --------
+    Returns
+    -------
     np.ndarray
         Data with ClusterID labels (noise = -1)
     """
@@ -279,11 +280,10 @@ def cluster_data(data : list[np.ndarray],
     
     all_data = np.vstack(data)
 
-    coords_3d = np.column_stack([
-        all_data[:, 3],  # X
-        all_data[:, 4],  # Y
-        all_data[:, 0] * layer_spacing # Z
-    ])
+    coords_3d = np.column_stack([all_data[:, 3],  # X
+                                 all_data[:, 4],  # Y
+                                 all_data[:, 0] * layer_spacing # Z
+                                 ])
 
     logger.info("INITIALIZING CLUSTERING...")
     logger.info(f"Total data points: {coords_3d.shape[0]}")
@@ -417,46 +417,42 @@ def cluster_data(data : list[np.ndarray],
         cluster_mask = viz_labels >= 0
 
         if np.any(noise_mask):
-            fig.add_trace(go.Scatter3d(
-                x=viz_coords[noise_mask, 0],
-                y=viz_coords[noise_mask, 1],
-                z=viz_coords[noise_mask, 2],
-                mode='markers',
-                marker=dict(size=1, color='black', opacity=0.3),
-                name='Noise',
-                hovertemplate='<b>Noise</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
-            ))
+            fig.add_trace(go.Scatter3d(x=viz_coords[noise_mask, 0],
+                                       y=viz_coords[noise_mask, 1],
+                                       z=viz_coords[noise_mask, 2],
+                                       mode='markers',
+                                       marker=dict(size=1, color='black', opacity=0.3),
+                                       name='Noise',
+                                       hovertemplate='<b>Noise</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+                                       )
+                          )
 
         if np.any(cluster_mask):
-            fig.add_trace(go.Scatter3d(
-                x=viz_coords[cluster_mask, 0],
-                y=viz_coords[cluster_mask, 1],
-                z=viz_coords[cluster_mask, 2],
-                mode='markers',
-                marker=dict(
-                    size=1,
-                    color=viz_labels[cluster_mask],
-                    colorscale='Spectral',
-                    opacity=0.6,
-                    colorbar=dict(title="Cluster ID", thickness=15)
-                ),
-                name=' ',
-                hovertemplate='<b>Cluster %{marker.color}</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
-            ))
+            fig.add_trace(go.Scatter3d(x=viz_coords[cluster_mask, 0],
+                                       y=viz_coords[cluster_mask, 1],
+                                       z=viz_coords[cluster_mask, 2],
+                                       mode='markers',
+                                       marker=dict(size=1,
+                                                   color=viz_labels[cluster_mask],
+                                                   colorscale='Spectral',
+                                                   opacity=0.6,
+                                                   colorbar=dict(title="Cluster ID", thickness=15)),
+                                       name=' ',
+                                       hovertemplate='<b>Cluster %{marker.color}</b><br>X: %{x:.2f}<br>Y: %{y:.2f}<br>Z: %{z:.2f}<extra></extra>'
+                                       )
+                          )
 
-        fig.update_layout(
-            title=f'Cluster Map of AMPM Data<br>{n_clusters} clusters, {len(coords_3d):,} total points',
-            scene=dict(
-                xaxis_title='X (mm)',
-                yaxis_title='Y (mm)',
-                zaxis_title=f'Z (Layer * {layer_spacing})',
-                aspectmode='manual',
-                aspectratio=dict(x=1, y=1, z=1)  # Force 1:1:1
-            ),
-            width=1280,
-            height=720,
-            showlegend=True
-        )
+        fig.update_layout(title=f'Cluster Map of AMPM Data<br>{n_clusters} clusters, {len(coords_3d):,} total points',
+                          scene=dict(xaxis_title='X (mm)',
+                                     yaxis_title='Y (mm)',
+                                     zaxis_title=f'Z (Layer * {layer_spacing})'
+                                     ,aspectmode='manual',
+                                     aspectratio=dict(x=1, y=1, z=1)  # Force 1:1:1
+                                     ),
+                          width=1280,
+                          height=720,
+                          showlegend=True
+                          )
 
         fig.show()
     
@@ -470,8 +466,8 @@ def assign_parts(clustered_data : np.ndarray,
     """
     Reassign ClusterIDs to PartIDs based on spatial matching.
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     clustered_data : np.ndarray
         Output from cluster_data() with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID
     parts_df : pd.DataFrame
@@ -481,8 +477,8 @@ def assign_parts(clustered_data : np.ndarray,
     verbose : bool, optional
         Set to False to silence console output (default: True)
         
-    Returns:
-    --------
+    Returns
+    -------
     np.ndarray
         Data with ClusterID column replaced by Part ID
     """
@@ -561,6 +557,135 @@ def assign_parts(clustered_data : np.ndarray,
     return result_data
 
 
+def assign_density(archi_data, parts_data):
+    """
+    Add density column to parts_data by looking up values from archi_data.
+    
+    Parameters
+    ----------
+    archi_data : pd.DataFrame
+        DataFrame with columns: Speed (mm/s), Power (W), Density AVG (g/cm^3)
+    parts_data : pd.DataFrame
+        DataFrame from get_parts() with columns: Part ID, Hatch Power, Hatch Point Distance, Hatch Exposure Time
+        
+    Returns
+    -------
+    pd.DataFrame
+        parts_data with added columns: Hatch Speed & Density (g/cm^3)
+    """
+
+    required_cols = ['Hatch Power', 'Hatch Point Distance', 'Hatch Exposure Time']
+    missing_cols = [col for col in required_cols if col not in parts_data.columns]
+    
+    if missing_cols:
+        raise ValueError(f'Missing parametric data in parts DataFrame: {missing_cols}')
+    
+    parts_w_density = parts_data.copy()
+    
+    parts_w_density['Hatch Speed']=(parts_w_density['Hatch Point Distance'].astype(float)/parts_w_density['Hatch Exposure Time'].astype(float))*1000
+    
+    densities = []
+    for idx, row in parts_w_density.iterrows():
+        hatch_speed = row['Hatch Speed']
+        hatch_power = float(row['Hatch Power'])
+        
+        density_row = archi_data[
+            (archi_data['Speed (mm/s)'] == hatch_speed) & 
+            (archi_data['Power (W)'] == hatch_power)
+        ]
+        
+        if len(density_row) > 0:
+            density = density_row['Density AVG (g/cm^3)'].values[0]
+        else:
+            density = np.nan
+            print(f"Warning: No density found for Part {row['Part ID']} (Speed={hatch_speed:.2f}, Power={hatch_power:.2f})")
+        
+        densities.append(density)
+    
+    parts_w_density['Density (g/cm^3)'] = densities
+    
+    return parts_w_density
+
+
+def cov_by_part(data):
+    """
+    Uses ampm part-assigned data to calculate CoV for each part.
+    Calculates statistics for both Plasma and Meltpool diodes.
+    Useful for parametric builds.
+
+    Parameters
+    ----------
+        data : np.ndarray
+            Part-assigned data output from assign_parts()
+            Columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, PartID
+
+    Returns
+    -------
+        pd.DataFrame
+            DataFrame with columns: Part ID, Plasma Mean, Plasma Std, Plasma CoV, Meltpool Mean, Meltpool Std, Meltpool CoV
+    """
+    
+    unique_parts = np.unique(data[:, -1])
+    
+    results = []
+    for part_id in unique_parts:
+        part_mask = data[:, -1] == part_id
+        
+        plasma_values = data[part_mask, 5] # Plasma
+        plasma_mean = np.mean(plasma_values)
+        plasma_std = np.std(plasma_values)
+        plasma_cov = plasma_std / plasma_mean
+        
+        meltpool_values = data[part_mask, 6] # Meltpool
+        meltpool_mean = np.mean(meltpool_values)
+        meltpool_std = np.std(meltpool_values)
+        meltpool_cov = meltpool_std / meltpool_mean
+        
+        results.append({'Part ID': int(part_id),
+                        'Plasma Mean': plasma_mean,
+                        'Plasma Std': plasma_std,
+                        'Plasma CoV': plasma_cov,
+                        'Meltpool Mean': meltpool_mean,
+                        'Meltpool Std': meltpool_std,
+                        'Meltpool CoV': meltpool_cov
+                        }
+                       )
+
+    cov_df = pd.DataFrame(results)
+    
+    return cov_df
+
+
+def assign_cov(cov_table, parts_data):
+    """
+    Add CoV columns to parts_data by merging with cov_table.
+    
+    Parameters
+    ----------
+    cov_table : pd.DataFrame
+        DataFrame from cov_by_part() with columns: 'Part ID', '<Diode> CoV', '<Diode> Mean', '<Diode> Std'
+    parts_data : pd.DataFrame
+        DataFrame from get_parts() with 'Part ID' column
+        
+    Returns
+    -------
+    pd.DataFrame
+        parts_data with added CoV columns
+    """
+    
+    # ADD ERROR CHECK FOR BAD COV TABLE OR PART DATA
+    
+    parts_w_cov = parts_data.copy()
+    cov_table_copy = cov_table.copy()
+    
+    parts_w_cov['Part ID'] = parts_w_cov['Part ID'].astype(str)
+    cov_table_copy['Part ID'] = cov_table_copy['Part ID'].astype(str)
+    
+    parts_w_cov = parts_w_cov.merge(cov_table_copy,on='Part ID',how='left')
+    
+    return parts_w_cov
+
+
 def find_neighbors(data: list[np.ndarray], k: int = 5, layer_spacing: float = 0.03) -> None:
     """
     Plot k-distance graph to help determine optimal eps parameter for DBSCAN
@@ -568,8 +693,8 @@ def find_neighbors(data: list[np.ndarray], k: int = 5, layer_spacing: float = 0.
     The k-distance graph shows the distance to the k-th nearest neighbor for each point
     The "knee" in the curve suggests a good eps value
     
-    Parameters:
-    -----------
+    Parameters
+    ----------
     data : list[np.ndarray]
         Output from import_ampm_data with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool
     k : int, optional
@@ -577,8 +702,8 @@ def find_neighbors(data: list[np.ndarray], k: int = 5, layer_spacing: float = 0.
     layer_spacing : float, optional
         Z coords = layer number * layer spacing (default: 0.03)
         
-    Returns:
-    --------
+    Returns
+    -------
     None
         Displays interactive plotly graph
     """
@@ -588,11 +713,11 @@ def find_neighbors(data: list[np.ndarray], k: int = 5, layer_spacing: float = 0.
     
     all_data = np.vstack(data)
     
-    coords_3d = np.column_stack([
-        all_data[:, 3],  # X
-        all_data[:, 4],  # Y
-        all_data[:, 0] * layer_spacing  # Z
-    ])
+    coords_3d = np.column_stack([all_data[:, 3],  # X
+                                 all_data[:, 4],  # Y
+                                 all_data[:, 0] * layer_spacing  # Z
+                                 ]
+                                )
     
     logger.info(f"Total points: {len(coords_3d):,}")
     
@@ -614,32 +739,231 @@ def find_neighbors(data: list[np.ndarray], k: int = 5, layer_spacing: float = 0.
     
     fig = go.Figure()
     
-    fig.add_trace(go.Scatter(
-        x=np.arange(len(k_distances_sorted)),
-        y=k_distances_sorted,
-        mode='lines',
-        line=dict(color='blue', width=1),
-        name=f'{k}-distance'
-    ))
+    fig.add_trace(go.Scatter(x=np.arange(len(k_distances_sorted)),
+                             y=k_distances_sorted,
+                             mode='lines',
+                             line=dict(color='blue', width=1),
+                             name=f'{k}-distance'
+                             )
+                  )
     
-    fig.add_hline(
-        y=np.median(k_distances_sorted),
-        line_dash="dash",
-        line_color="red",
-        annotation_text=f"Median: {np.median(k_distances_sorted):.4f}",
-        annotation_position="right"
-    )
+    fig.add_hline(y=np.median(k_distances_sorted),
+                  line_dash="dash",
+                  line_color="red",
+                  annotation_text=f"Median: {np.median(k_distances_sorted):.4f}",
+                  annotation_position="right"
+                  )
     
-    fig.update_layout(
-        title=f'K-Distance Graph (k={k})',
-        xaxis_title='Points (sorted by distance)',
-        yaxis_title=f'Distance to {k}th Nearest Neighbor',
-        width=1280,
-        height=720,
-        hovermode='closest'
-    )
+    fig.update_layout(title=f'K-Distance Graph (k={k})',
+                      xaxis_title='Points (sorted by distance)',
+                      yaxis_title=f'Distance to {k}th Nearest Neighbor',
+                      width=1280,
+                      height=720,
+                      hovermode='closest'
+                      )
     
     fig.show()
+    
+    
+def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
+    """
+    Analyze the distribution of Plasma and Meltpool columns by Part ID
+    
+    Parameters
+    ----------
+    data : numpy.ndarray
+        2D array with shape (n_rows, 8) containing columns:
+        [Layer, Time, Dwell, X, Y, Plasma, Meltpool, Part ID]
+    plot_parts : list of int, optional
+        List of Part IDs to plot. If None, plots all parts.
+    parts_data : pandas.DataFrame, optional
+        DataFrame containing part parameters.
+        Must have "Part ID" and parametric data for enhanced legend display.
+    
+    Returns
+    -------
+    fig : plotly.graph_objects.Figure
+        Figure object containing the interactive density plots
+    """
+    PLASMA_COL = 5
+    MELTPOOL_COL = 6
+    PART_ID_COL = 7
+    
+    if parts_data is not None:
+        if "Part ID" not in parts_data.columns:
+            raise ValueError(f"Error! No column 'Part ID' in parts_data:\n{parts_data}")
+        
+        if "Hatch Speed" not in parts_data.columns:
+            if "Hatch Point Distance" in parts_data.columns and "Hatch Exposure Time" in parts_data.columns:
+                parts_data = parts_data.copy()
+                parts_data["Hatch Speed"] = (parts_data["Hatch Point Distance"] / parts_data["Hatch Exposure Time"]) * 1000
+            else:
+                raise ValueError(f"Warning! No parametric data in parts_data:\n{parts_data}")
+        
+        if "Hatch Power" not in parts_data.columns:
+            raise ValueError(f"Warning! No column 'Hatch Power' in parts_data:\n{parts_data}")
+    
+    unique_parts = np.unique(data[:, PART_ID_COL])
+    
+    if plot_parts is not None:
+        plot_parts = np.array(plot_parts)
+        unique_parts = unique_parts[np.isin(unique_parts, plot_parts)]
+        if len(unique_parts) == 0:
+            raise ValueError(f"No valid Part IDs found. Available parts: {np.unique(data[:, PART_ID_COL])}")
+    
+    n_parts = len(unique_parts)
+    
+    print(f"\nPlotting {n_parts} Part IDs: {unique_parts}")
+    
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+              '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+              '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
+              '#c49c94', '#f7b6d2', '#c7c7c7', '#dbdb8d', '#9edae5'
+              ]
+    
+    fig = make_subplots(rows=1,cols=3,subplot_titles=('Plasma Distribution','Meltpool Distribution','Joint Distribution'),horizontal_spacing=0.1)
+    
+    for idx, part_id in enumerate(unique_parts):
+        mask = data[:, PART_ID_COL] == part_id
+        filtered_data = data[mask]
+        
+        if len(filtered_data) == 0:
+            continue
+        
+        plasma = filtered_data[:, PLASMA_COL]
+        meltpool = filtered_data[:, MELTPOOL_COL]
+        
+        valid_mask = np.isfinite(plasma) & np.isfinite(meltpool)
+        plasma = plasma[valid_mask]
+        meltpool = meltpool[valid_mask]
+        
+        if len(plasma) == 0:
+            continue
+        
+        color = colors[idx % len(colors)]
+        
+        # Part ID -1 = Noise
+        if int(part_id) == -1:
+            label = 'Noise'
+            color = '#000000'
+        else:
+            label = f'Part {int(part_id)}'
+        
+        if parts_data is not None and int(part_id) != -1:
+            part_row = parts_data[parts_data["Part ID"] == int(part_id)]
+            if len(part_row) == 0 and parts_data["Part ID"].dtype == 'object':
+                part_row = parts_data[parts_data["Part ID"].astype(int) == int(part_id)]
+            
+            if len(part_row) > 0:
+                hatch_speed = part_row["Hatch Speed"].iloc[0]
+                hatch_power = part_row["Hatch Power"].iloc[0]
+                label = f'P{int(part_id)}: {hatch_speed:.0f}mm/s, {hatch_power:.0f}W'
+        
+        slope, intercept, r_value, p_value, std_err = linregress(plasma, meltpool)
+        r_squared = r_value ** 2
+        
+        label_with_fit = f"{label} (m={slope:.2f}, R²={r_squared:.3f})"
+        
+        # Plasma density
+        kde_plasma = gaussian_kde(plasma)
+        x_plasma = np.linspace(plasma.min(), plasma.max(), 200)
+        y_plasma = kde_plasma(x_plasma)
+        
+        fig.add_trace(go.Scatter(x=x_plasma,
+                                 y=y_plasma, 
+                                 mode='lines', 
+                                 name=label_with_fit,
+                                 line=dict(color=color, width=2),
+                                 fill='tozeroy',
+                                 opacity=0.1,
+                                 legendgroup=label, 
+                                 showlegend=True
+                                 ),
+                      row=1, col=1
+                      )
+        
+        # Meltpool density
+        kde_meltpool = gaussian_kde(meltpool)
+        x_meltpool = np.linspace(meltpool.min(), meltpool.max(), 200)
+        y_meltpool = kde_meltpool(x_meltpool)
+        
+        fig.add_trace(go.Scatter(x=x_meltpool, 
+                                 y=y_meltpool, 
+                                 mode='lines', 
+                                 name=label,
+                                 line=dict(color=color, width=2),
+                                 fill='tozeroy',
+                                 opacity=0.1,
+                                 legendgroup=label, 
+                                 showlegend=False
+                                 ),
+                      row=1, col=2
+                      )
+        
+        # Joint scatter plot
+        sample_plasma = plasma
+        sample_meltpool = meltpool
+        if len(plasma) > 200:
+            sample_idx = np.random.choice(len(plasma), 200, replace=False)
+            sample_plasma = plasma[sample_idx]
+            sample_meltpool = meltpool[sample_idx]
+        
+        fig.add_trace(go.Scatter(x=sample_plasma,
+                                 y=sample_meltpool, 
+                                 mode='markers',
+                                 name=label_with_fit,
+                                 marker=dict(color=color, size=4, opacity=0.3),
+                                 legendgroup=label,
+                                 showlegend=False
+                                 ),
+                      row=1, col=3
+                      )
+        
+        if int(part_id) == -1:
+            print(f"\nNoise: {int(part_id)} ({len(plasma)} points)")
+        else:
+            print(f"\nPart ID: {int(part_id)} ({len(plasma)} points)")
+        
+        if parts_data is not None and int(part_id) != -1:
+            part_row = parts_data[parts_data["Part ID"] == int(part_id)]
+            if len(part_row) == 0 and parts_data["Part ID"].dtype == 'object':
+                part_row = parts_data[parts_data["Part ID"].astype(int) == int(part_id)]
+            
+            if len(part_row) > 0:
+                hatch_speed_val = part_row["Hatch Speed"].iloc[0]
+                hatch_power_val = part_row["Hatch Power"].iloc[0]
+                print(f"  Speed: {hatch_speed_val:.0f}mm/s, Power: {hatch_power_val:.0f}W")
+        
+        print(f"  Plasma  - Mean: {plasma.mean():.4f}, Std: {plasma.std():.4f}, CoV: {plasma.std()/plasma.mean():.4f}")
+        print(f"  Meltpool - Mean: {meltpool.mean():.4f}, Std: {meltpool.std():.4f}, CoV: {meltpool.std()/meltpool.mean():.4f}")
+        print(f"  Linear fit - Slope: {slope:.4f}, R²: {r_squared:.4f}")
+    
+    fig.update_xaxes(title_text="Plasma", row=1, col=1, showgrid=True, gridcolor='lightgray')
+    fig.update_yaxes(title_text="Density", row=1, col=1, showgrid=True, gridcolor='lightgray')
+    
+    fig.update_xaxes(title_text="Meltpool", row=1, col=2, showgrid=True, gridcolor='lightgray')
+    fig.update_yaxes(title_text="Density", row=1, col=2, showgrid=True, gridcolor='lightgray')
+    
+    fig.update_xaxes(title_text="Plasma", row=1, col=3, showgrid=True, gridcolor='lightgray')
+    fig.update_yaxes(title_text="Meltpool", row=1, col=3, showgrid=True, gridcolor='lightgray')
+    
+    try:
+        root = tk.Tk()
+        screen_width = root.winfo_screenwidth() # Probably better to make a config at some point
+        root.destroy()
+        fig_width = min(int(screen_width * 0.9), 1800) # 90% of screen width
+    except:
+        fig_width = 1400
+    
+    fig.update_layout(height=500,
+                      width=fig_width,
+                      showlegend=True,
+                      legend=dict(orientation="v",yanchor="top",y=1,xanchor="left",x=1.02),
+                      hovermode='closest',
+                      template='plotly_white'
+                      )
+    
+    return fig
 
 
 # Example usage:
