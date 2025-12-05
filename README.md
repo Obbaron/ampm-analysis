@@ -1,19 +1,18 @@
 # ampm-data
 
-A comprehensive tool for analyzing additive manufacturing process monitoring (AMPM) data with advanced clustering, visualization, and statistical analysis capabilities.
+An exploratory tool for analyzing additive manufacturing process monitoring (AMPM) data with visualization and statistical analysis capabilities.
 
 ## Overview
 
-`ampm-data` provides a robust framework for processing and analyzing large-scale additive manufacturing sensor data. The toolkit enables spatial clustering of process monitoring measurements, automatic part identification, and multi-faceted statistical analysis to support quality assessment and process optimization.
+`ampm-data` provides a framework of functions for processing and analyzing large-scale ampm data.
 
 ## Features
 
-- **Automated Spatial Clustering**: Memory-efficient chunked processing for large datasets with automatic cluster merging across layer boundaries
-- **Interactive 3D Visualization**: Plotly-based interactive scatter plots for exploring spatial distributions of clusters and measurements
-- **Part Assignment**: Automatic mapping of spatial clusters to CAD part definitions based on geometric positioning
-- **Parameter Optimization**: K-distance analysis tools to determine optimal clustering parameters
-- **Statistical Analysis**: Calculate statistics (mean, standard deviation, coefficient of variation) for each part or cluster
-- **Comprehensive Logging**: Detailed process logging to both console and file for reproducibility and debugging
+- **Interactive 3D Visualization**: Plotly-based interactive scatter plots for exploring spatial distributions of part clusters and measurements
+- **Part Assignment**: Automatic mapping of spatial clusters to CAD part definitions based on DBSCAN
+- **Parameter Optimization**: K-distance analysis tools to determine optimal clustering per build
+- **Statistical Analysis**: Calculate statistics
+- **Comprehensive Logging**: Detailed process logging to both console and file for reproducibility
 
 ## Installation
 
@@ -30,7 +29,7 @@ pip install scikit-learn numpy pandas plotly
 Clone the repository and ensure the `ampm.py` module is in your Python path:
 
 ```bash
-git clone https://github.com/yourusername/ampm-data.git
+git clone https://github.com/Obbaron/ampm-data.git
 cd ampm-data
 ```
 
@@ -155,7 +154,7 @@ clustered_data = cluster_data(data, verbose=False)
 
 ## Contributing
 
-This is an internal research tool. For questions or suggestions, please contact the development team.
+This is an internal research tool. For questions or suggestions, please contact me!
 
 ## License
 
