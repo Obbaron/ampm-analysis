@@ -17,7 +17,7 @@ console_logger.setLevel(logging.INFO)
 console_logger.setFormatter(logging.Formatter('%(message)s'))
 logger.addHandler(console_logger)
 
-file_logger = logging.FileHandler('clustering.log', mode='a')
+file_logger = logging.FileHandler('ampm.log', mode='a')
 file_logger.setLevel(logging.INFO)
 file_logger.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
 logger.addHandler(file_logger)
@@ -500,7 +500,7 @@ def assign_parts(clustered_data : np.ndarray,
     logger.info(f"Found {n_parts} parts in DataFrame")
     
     if n_clusters != n_parts:
-        logger.error(f"MISMATCH: Number of clusters ({n_clusters}) does not match number of parts ({n_parts})")
+        logger.error(f"MISMATCH: Number of clusters ({n_clusters}) does not match number of parts ({n_parts})\n")
         raise ValueError(f"Cluster-Part mismatch: {n_clusters} clusters vs {n_parts} parts")
     
     cluster_to_part_map = {}
@@ -806,14 +806,16 @@ def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
     unique_parts = np.unique(data[:, PART_ID_COL])
     
     if plot_parts is not None:
-        plot_parts = np.array(plot_parts)
-        unique_parts = unique_parts[np.isin(unique_parts, plot_parts)]
+        plot_parts = np.array(plot_parts, dtype=int)
+        unique_parts_int = unique_parts.astype(int)
+        mask = np.isin(unique_parts_int, plot_parts)
+        unique_parts = unique_parts[mask]
         if len(unique_parts) == 0:
-            raise ValueError(f"No valid Part IDs found. Available parts: {np.unique(data[:, PART_ID_COL])}")
+            raise ValueError(f"No valid Part IDs found. Requested: {plot_parts}, Available: {unique_parts_int}")
     
     n_parts = len(unique_parts)
     
-    print(f"\nPlotting {n_parts} Part IDs: {unique_parts}")
+    print(f"Plotting {n_parts} Part IDs: {unique_parts}")
     
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
               '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
@@ -862,7 +864,7 @@ def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
         slope, intercept, r_value, p_value, std_err = linregress(plasma, meltpool)
         r_squared = r_value ** 2
         
-        label_with_fit = f"{label} (m={slope:.2f}, R²={r_squared:.3f})"
+        label_with_fit = f'{label} (m={slope:.2f}, R²={r_squared:.3f})'
         
         # Plasma density
         kde_plasma = gaussian_kde(plasma)
@@ -912,7 +914,7 @@ def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
                                  y=sample_meltpool, 
                                  mode='markers',
                                  name=label_with_fit,
-                                 marker=dict(color=color, size=4, opacity=0.3),
+                                 marker=dict(color=color, size=4, opacity=0.2),
                                  legendgroup=label,
                                  showlegend=False
                                  ),
@@ -944,8 +946,8 @@ def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
     fig.update_xaxes(title_text="Meltpool", row=1, col=2, showgrid=True, gridcolor='lightgray')
     fig.update_yaxes(title_text="Density", row=1, col=2, showgrid=True, gridcolor='lightgray')
     
-    fig.update_xaxes(title_text="Plasma", row=1, col=3, showgrid=True, gridcolor='lightgray')
-    fig.update_yaxes(title_text="Meltpool", row=1, col=3, showgrid=True, gridcolor='lightgray')
+    fig.update_xaxes(title_text="Plasma", row=1, col=3, showgrid=True, gridcolor='lightgray', dtick=None, minor=dict(showgrid=True, gridcolor='lightgray', griddash='dot'))
+    fig.update_yaxes(title_text="Meltpool", row=1, col=3, showgrid=True, gridcolor='lightgray', dtick=None, minor=dict(showgrid=True, gridcolor='lightgray', griddash='dot'))
     
     try:
         root = tk.Tk()
