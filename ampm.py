@@ -13,15 +13,15 @@ from sklearn.neighbors import NearestNeighbors
 
 logger = logging.getLogger(__name__)
 
-console_logger = logging.StreamHandler()
-console_logger.setLevel(logging.INFO)
-console_logger.setFormatter(logging.Formatter("%(message)s"))
-logger.addHandler(console_logger)
-
 file_logger = logging.FileHandler("ampm.log", mode="a")
 file_logger.setLevel(logging.INFO)
 file_logger.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
 logger.addHandler(file_logger)
+
+console_logger = logging.StreamHandler()
+console_logger.setLevel(logging.INFO)
+console_logger.setFormatter(logging.Formatter("%(message)s"))
+logger.addHandler(console_logger)
 
 logger.setLevel(logging.INFO)
 logger.propagate = False
@@ -36,52 +36,38 @@ def import_ampm_data(
     y_min: float = -125.0,
     y_max: float = 125.0,
     laser_number: int = 4,
-    verbose: bool = True,
     return_dict: bool = False,
 ) -> list[np.ndarray] | dict:
     """
-    Import AMPM data from region of interest: [Layer, Time, Dwell, X, Y, Plasma, Meltpool]
+    Import AMPM data from region of interest: [Layer, Time, Dwell, X, Y, Plasma, Meltpool].
 
     Parameters
     ----------
     filepath : Path | str
-        Directory path containing the data files
+        Directory path containing the data files.
     start_layer : int
-        First layer number to process
+        First layer number to process.
     end_layer : int
-        Last layer number to process (inclusive)
+        Last layer number to process (inclusive).
     x_min : float, optional
-        Lower x-coordinate boundary for ROI (mm) (default: -125.0)
+        Lower x-coordinate boundary for ROI (mm) (default: -125.0).
     x_max : float, optional
-        Upper x-coordinate boundary for ROI (mm) (default: 125.0)
+        Upper x-coordinate boundary for ROI (mm) (default: 125.0).
     y_min : float, optional
-        Lower y-coordinate boundary for ROI (mm) (default: -125.0)
+        Lower y-coordinate boundary for ROI (mm) (default: -125.0).
     y_max : float, optional
-        Upper y-coordinate boundary for ROI (mm) (default: 125.0)
+        Upper y-coordinate boundary for ROI (mm) (default: 125.0).
     laser_number : int, optional
-        Laser number in filename (default: 4)
-    verbose : bool, optional
-        Set to False to silence console output (default: True)
+        Laser number in filename (default: 4).
     return_dict : bool, optional
-        If True, return dict with layer number as keys (default: False)
+        If True, return dict with layer number as keys (default: False).
 
     Returns
     -------
-    list | dict
-        List of numpy arrays (dict if return_dict=True), one array per layer
-        Each array has 7 columns: [layer, time, duration, x, y, plasma, meltpool]
+    roi_data : list | dict
+        List of numpy arrays (dict if return_dict=True), one array per layer.
+        7 columns: [layer, time, duration, x, y, plasma, meltpool].
     """
-
-    console_logger = [
-        h
-        for h in logger.handlers
-        if isinstance(h, logging.StreamHandler)
-        and not isinstance(h, logging.FileHandler)
-    ][0]
-    if verbose:
-        console_logger.setLevel(logging.INFO)
-    else:
-        console_logger.setLevel(logging.ERROR)
 
     filepath = Path(filepath) if isinstance(filepath, str) else filepath
     if not filepath.exists():
@@ -169,7 +155,7 @@ def find_ampm_files(project_directory: Path | str) -> dict[Path | None]:
         - 'data_directory' : Path
             Path to the directory containing the AMPM packet data files.
         - 'parts_filepath' : Path | None
-            Path to the QuantAM parts CSV file or None if not found.
+            Path to the QuantAM parts CSV file, or None if not found.
 
     Raises
     ------
@@ -261,22 +247,21 @@ def find_ampm_files(project_directory: Path | str) -> dict[Path | None]:
 
 def get_parts(filepath: Path | str, parametric: bool = False) -> pd.DataFrame:
     """
-    Create a pandas DataFrame from parts data exported from QuantAM (.csv)
+    Create a pandas DataFrame from parts CSV exported from QuantAM.
 
     Parameters
     ----------
     filepath : Path | str
-        Filepath to parts data file (.csv)
+        Path to QuantAM exported parts CSV file.
     parametric : bool, optional
-        Include Hatch Power, Hatch Point Distance, Hatch Exposure Time (default: False)
+        Include Hatch Power, Hatch Point Distance, Hatch Exposure Time (default: False).
 
     Returns
     -------
-    pd.DataFrame
-        DataFrame of [Part ID, Layer Thickness, X Position, Y Position, Layers Count]
-        Optionally include [Hatch Power, Hatch Point Distance, Hatch Exposure Time]
+    parts_data : pd.DataFrame
+        DataFrame of [Part ID, Layer Thickness, X Position, Y Position, Layers Count].
+        Optionally include [Hatch Power, Hatch Point Distance, Hatch Exposure Time].
     """
-
     filepath = Path(filepath) if isinstance(filepath, str) else filepath
     if not filepath.exists():
         raise FileNotFoundError(f"File not found: {filepath}")
@@ -369,54 +354,45 @@ def cluster_data(
     layers_per_chunk: int = 10,
     overlap_layers: int = 2,
     layer_spacing: float = 0.03,
-    verbose: bool = True,
     visualize: bool = False,
 ) -> np.ndarray:
     """
-    Groups AMPM data into clusters using a chunked 3D DBSCAN
+    Groups AMPM data into clusters using a chunked 3D DBSCAN.
 
     Parameters
     ----------
     data : list[np.ndarray]
-        Output from import_data with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID
+        Output from import_data().
+        7 columns: [Layer, Time, Dwell, X, Y, Plasma, Meltpool].
     eps_xy : float, optional
-        Max XY distance (mm) between two samples for one to be considered as in the neighborhood of the other  (default: 0.10)
+        Max XY distance (mm) between two samples for one to be considered as in the neighborhood of the other  (default: 0.10).
     eps_z : float, optional
-        Effective 3D eps = sqrt(eps_xy**2 + eps_z**2) (default: 0.10)
+        Effective 3D eps = sqrt(eps_xy**2 + eps_z**2) (default: 0.10).
     min_samples : int, optional
-        Number of samples in a neighborhood for a point to be considered a core point (default: 20)
+        Number of samples in a neighborhood for a point to be considered a core point (default: 20).
     layers_per_chunk : int, optional
-        Layers are processed in chunks to limit memory requirements (default: 10)
+        Layers are processed in chunks to limit memory requirements (default: 10).
     overlap_layers : int, optional
-        Number of overlapping layers at chunk boundary to maintain Z continuity (default: 2)
+        Number of overlapping layers at chunk boundary to maintain Z continuity (default: 2).
     layer_spacing : float, optional
-        Z coords = layer number * layer spacing (default: 0.03)
-    verbose : bool, optional
-        Set to False to silence console output (default: True)
+        Z coords = layer number * layer spacing (default: 0.03).
     visualize : bool, optional
-        Set to True to see a decimated 3D scatter plot after cluserting (default: False)
+        Set to True to see a decimated 3D scatter plot after cluserting (default: False).
 
     Returns
     -------
-    np.ndarray
-        Data with ClusterID labels (noise = -1)
+    clustered_data : np.ndarray
+        Data with ClusterID labels (noise = -1).
+        8 columns: [Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID].
     """
-
-    console_logger = [
-        h
-        for h in logger.handlers
-        if isinstance(h, logging.StreamHandler)
-        and not isinstance(h, logging.FileHandler)
-    ][0]
-    if verbose:
-        console_logger.setLevel(logging.INFO)
-    else:
-        console_logger.setLevel(logging.ERROR)
-
-    all_data = np.vstack(data)
+    clustered_data = np.vstack(data)
 
     coords_3d = np.column_stack(
-        [all_data[:, 3], all_data[:, 4], all_data[:, 0] * layer_spacing]  # X  # Y  # Z
+        [
+            clustered_data[:, 3],  # X
+            clustered_data[:, 4],  # Y
+            clustered_data[:, 0] * layer_spacing,  # Z
+        ]
     )
 
     logger.info("INITIALIZING CLUSTERING...")
@@ -436,7 +412,7 @@ def cluster_data(
     logger.info(f"  min_samples: {min_samples}")
     logger.info(f"  Layer spacing: layer * {layer_spacing}\n")
 
-    unique_layers = np.unique(all_data[:, 0])
+    unique_layers = np.unique(clustered_data[:, 0])
     n_layers = len(unique_layers)
 
     logger.info(
@@ -444,7 +420,7 @@ def cluster_data(
     )
     chunk_num = 0
 
-    labels = np.full(len(all_data), -1, dtype=int)
+    labels = np.full(len(clustered_data), -1, dtype=int)
     global_cluster_id = 0
 
     for chunk_start in range(0, n_layers, layers_per_chunk - overlap_layers):
@@ -457,7 +433,7 @@ def cluster_data(
             )
             continue
 
-        chunk_mask = np.isin(all_data[:, 0], chunk_layers)
+        chunk_mask = np.isin(clustered_data[:, 0], chunk_layers)
         chunk_coords = coords_3d[chunk_mask]
         chunk_indices = np.where(chunk_mask)[0]
         chunk_num += 1
@@ -488,8 +464,8 @@ def cluster_data(
                 min(overlap_layers - 1, len(chunk_layers) - 1)
             ]
 
-            overlap_mask = (all_data[chunk_indices, 0] >= overlap_layer_start) & (
-                all_data[chunk_indices, 0] <= overlap_layer_end
+            overlap_mask = (clustered_data[chunk_indices, 0] >= overlap_layer_start) & (
+                clustered_data[chunk_indices, 0] <= overlap_layer_end
             )
 
             logger.info(
@@ -539,11 +515,11 @@ def cluster_data(
         f"Total clustered points: {np.sum(labels >= 0):,} ({100*np.sum(labels >= 0)/len(labels):.2f}%)\n"
     )
 
-    all_data = np.column_stack([all_data, labels])
+    clustered_data = np.column_stack([clustered_data, labels])
 
-    unique_layers = np.unique(all_data[:, 0])
+    unique_layers = np.unique(clustered_data[:, 0])
     for layer in unique_layers:
-        layer_mask = all_data[:, 0] == layer
+        layer_mask = clustered_data[:, 0] == layer
         layer_labels = labels[layer_mask]
         n_noise = np.sum(layer_labels == -1)
         n_clusters_in_layer = len(set(layer_labels[layer_labels >= 0]))
@@ -619,46 +595,36 @@ def cluster_data(
 
         fig.show()
 
-    return all_data
+    return clustered_data
 
 
 def assign_parts(
     clustered_data: np.ndarray,
     parts_df: pd.DataFrame,
     save_file: bool = True,
-    verbose: bool = True,
 ) -> np.ndarray:
     """
-    Reassign ClusterIDs to PartIDs based on spatial matching.
+    Use spatial matching to reassign ClusterIDs to associated Part IDs from parts data.
 
     Parameters
     ----------
     clustered_data : np.ndarray
-        Output from cluster_data() with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID
+        Output from cluster_data().
+        8 columns: [Layer, Time, Dwell, X, Y, Plasma, Meltpool, ClusterID].
     parts_df : pd.DataFrame
-        Output from get_parts() with columns: Part ID, Layer Thickness, X position, Y Position, Layers count
+        Output from get_parts()
+        Columns: [Part ID, Layer Thickness, X position, Y Position, Layers count].
     save_file : bool, optional
-        Set to False to not generate .npy of part-assigned array (default: True)
+        Set to False to not generate .npy of part-assigned array (default: True).
     verbose : bool, optional
-        Set to False to silence console output (default: True)
+        Set to False to silence console output (default: True).
 
     Returns
     -------
-    np.ndarray
-        Data with ClusterID column replaced by Part ID
+    relabeled_data : np.ndarray
+        Data with ClusterID column replaced by Part ID.
+        8 columns: [Layer, Time, Dwell, X, Y, Plasma, Meltpool, Part ID].
     """
-
-    console_logger = [
-        h
-        for h in logger.handlers
-        if isinstance(h, logging.StreamHandler)
-        and not isinstance(h, logging.FileHandler)
-    ][0]
-    if verbose:
-        console_logger.setLevel(logging.INFO)
-    else:
-        console_logger.setLevel(logging.ERROR)
-
     cluster_labels = clustered_data[:, -1].astype(int)
 
     unique_clusters = np.unique(cluster_labels[cluster_labels >= 0])
@@ -719,8 +685,8 @@ def assign_parts(
     for cluster_id, part_id in cluster_to_part_map.items():
         new_labels[cluster_labels == cluster_id] = part_id
 
-    result_data = clustered_data.copy()
-    result_data[:, -1] = new_labels
+    relabeled_data = clustered_data.copy()
+    relabeled_data[:, -1] = new_labels
 
     logger.info("\n")
     logger.info("ASSIGNING COMPLETE")
@@ -728,30 +694,30 @@ def assign_parts(
 
     if save_file:
         logger.info("Saving part assigned data...")
-        np.save("ampm_part_assigned.npy", result_data)
+        np.save("ampm_part_assigned.npy", relabeled_data)
         logger.info("Saved to: ampm_part_assigned.npy")
         logger.info("  Columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, PartID\n")
 
-    return result_data
+    return relabeled_data
 
 
-def assign_density(archi_data, parts_data):
+def assign_density(archi_data, parts_data) -> pd.DataFrame:
     """
     Add density column to parts_data by looking up values from archi_data.
 
     Parameters
     ----------
     archi_data : pd.DataFrame
-        DataFrame with columns: Speed (mm/s), Power (W), Density AVG (g/cm^3)
+        Columns: [Speed (mm/s), Power (W), Density AVG (g/cm^3)].
     parts_data : pd.DataFrame
-        DataFrame from get_parts() with columns: Part ID, Hatch Power, Hatch Point Distance, Hatch Exposure Time
+        Output from get_parts().
+        Columns: [Part ID, Hatch Power, Hatch Point Distance, Hatch Exposure Time].
 
     Returns
     -------
-    pd.DataFrame
-        parts_data with added columns: Hatch Speed & Density (g/cm^3)
+    parts_w_density : pd.DataFrame
+        parts_data with added columns: [Hatch Speed, Density (g/cm^3)].
     """
-
     required_cols = ["Hatch Power", "Hatch Point Distance", "Hatch Exposure Time"]
     missing_cols = [col for col in required_cols if col not in parts_data.columns]
 
@@ -790,24 +756,22 @@ def assign_density(archi_data, parts_data):
     return parts_w_density
 
 
-def cov_by_part(data):
+def cov_by_part(data) -> pd.DataFrame:
     """
     Uses ampm part-assigned data to calculate CoV for each part.
     Calculates statistics for both Plasma and Meltpool diodes.
-    Useful for parametric builds.
 
     Parameters
     ----------
-        data : np.ndarray
-            Part-assigned data output from assign_parts()
-            Columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, PartID
+    data : np.ndarray
+        Output from assign_parts().
+        8 columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool, PartID.
 
     Returns
     -------
-        pd.DataFrame
-            DataFrame with columns: Part ID, Plasma Mean, Plasma Std, Plasma CoV, Meltpool Mean, Meltpool Std, Meltpool CoV
+    cov_df : pd.DataFrame
+        7 columns: [Part ID, Plasma Mean, Plasma Std, Plasma CoV, Meltpool Mean, Meltpool Std, Meltpool CoV].
     """
-
     unique_parts = np.unique(data[:, -1])
 
     results = []
@@ -841,26 +805,26 @@ def cov_by_part(data):
     return cov_df
 
 
-def assign_cov(cov_table, parts_data):
+def assign_cov(cov_table, parts_data) -> pd.DataFrame:
     """
     Add CoV columns to parts_data by merging with cov_table.
 
     Parameters
     ----------
     cov_table : pd.DataFrame
-        DataFrame from cov_by_part() with columns: 'Part ID', '<Diode> CoV', '<Diode> Mean', '<Diode> Std'
+        Output from cov_by_part().
+        4 columns: ['Part ID', '<Diode> CoV', '<Diode> Mean', '<Diode> Std'].
     parts_data : pd.DataFrame
-        DataFrame from get_parts() with 'Part ID' column
+        Output from get_parts().
+        Columns: [Part ID, Layer Thickness, X Position, Y Position, Layers Count].
 
     Returns
     -------
-    pd.DataFrame
-        parts_data with added CoV columns
+    parts_w_cov : pd.DataFrame
+        parts_data with added calculated columns.
+        Columns: [Part ID, Layer Thickness, X Position, Y Position, Layers Count, '<Diode> CoV', '<Diode> Mean', '<Diode> Std'].
     """
-
-    # ADD ERROR CHECK FOR BAD COV TABLE OR PART DATA
-
-    parts_w_cov = parts_data.copy()
+    parts_w_cov = parts_data.copy()  # ADD ERROR CHECK FOR BAD COV TABLE OR PART DATA
     cov_table_copy = cov_table.copy()
 
     parts_w_cov["Part ID"] = parts_w_cov["Part ID"].astype(str)
@@ -875,26 +839,26 @@ def find_neighbors(
     data: list[np.ndarray], k: int = 5, layer_spacing: float = 0.03
 ) -> None:
     """
-    Plot k-distance graph to help determine optimal eps parameter for DBSCAN
+    Plot k-distance graph to help determine optimal eps parameter for DBSCAN.
 
-    The k-distance graph shows the distance to the k-th nearest neighbor for each point
-    The "knee" in the curve suggests a good eps value
+    The k-distance graph shows the distance to the k-th nearest neighbor for each point.
+    The "knee" in the curve suggests a good eps value.
 
     Parameters
     ----------
     data : list[np.ndarray]
-        Output from import_ampm_data with columns: Layer, Time, Dwell, X, Y, Plasma, Meltpool
+        Output from import_ampm_data().
+        7 columns: [Layer, Time, Dwell, X, Y, Plasma, Meltpool].
     k : int, optional
-        Number of nearest neighbors to consider (should match min_samples in DBSCAN) (default: 50)
+        Number of nearest neighbors to consider (should match min_samples in DBSCAN) (default: 50).
     layer_spacing : float, optional
-        Z coords = layer number * layer spacing (default: 0.03)
+        Z coords = layer number * layer spacing (default: 0.03).
 
     Returns
     -------
     None
-        Displays interactive plotly graph
+        Displays interactive plotly graph of k-distance.
     """
-
     logger.info("COMPUTING K-DISTANCE GRAPH...")
     logger.info(f"k-neighbors: {k}")
 
@@ -958,16 +922,16 @@ def find_neighbors(
     fig.show()
 
 
-def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
+def analyze_parts_distribution(data, plot_parts=None, parts_data=None) -> None:
     """
-    Analyze the distribution of Plasma and Meltpool columns by Part ID
+    Analyze the distribution of Plasma and Meltpool columns by Part ID.
 
     Parameters
     ----------
     data : numpy.ndarray
-        2D array with shape (n_rows, 8) containing columns:
-        [Layer, Time, Dwell, X, Y, Plasma, Meltpool, Part ID]
-    plot_parts : list of int, optional
+        2D array with shape (n_rows, 8)
+        Columns: [Layer, Time, Dwell, X, Y, Plasma, Meltpool, Part ID]
+    plot_parts : list[int], optional
         List of Part IDs to plot. If None, plots all parts.
     parts_data : pandas.DataFrame, optional
         DataFrame containing part parameters.
@@ -975,8 +939,8 @@ def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
 
     Returns
     -------
-    fig : plotly.graph_objects.Figure
-        Figure object containing the interactive density plots
+    None
+        Displays interactive plotly graph of density plots.
     """
     PLASMA_COL = 5
     MELTPOOL_COL = 6
@@ -1243,7 +1207,7 @@ def analyze_parts_distribution(data, plot_parts=None, parts_data=None):
     logger.info("\n")
     logger.info(f"SUCCESSFULLY PLOTTED {n_parts} parts\n")
 
-    return fig
+    fig.show()
 
 
 # Example usage:
@@ -1273,5 +1237,5 @@ if __name__ == "__main__":
             print(f"First layer shape: {roi_data[0].shape}")
             print("Column order: [layer, time, duration, x, y, plasma, meltpool]")
 
-    except (ValueError, FileNotFoundError) as e:
+    except Exception as e:
         print(f"Error: {e}")
