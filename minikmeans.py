@@ -5,8 +5,11 @@ import matplotlib.pyplot as plt
 from ampm import import_ampm_data
 
 
-data_directory = Path.cwd()/'Spectral.ExportPackets.20251001-123012.386 (579d0101-046b-4142-bce7-5d3f82867967)'
-parts_file = Path.cwd()/'JR265_AMPM'/'JR265_AMPM_parameters_all(fresh).csv'
+data_directory = (
+    Path.cwd()
+    / "Spectral.ExportPackets.20251119-122056.059 (4915479c-081b-423c-9764-21950405961b)"
+)
+parts_file = Path.cwd() / "JR293_Ti7Cu.csv"
 
 
 data_list = import_ampm_data(
@@ -17,19 +20,17 @@ data_list = import_ampm_data(
     y_max=125,
     start_layer=101,
     end_layer=150,
-    return_dict=False
+    return_dict=False,
 )
 
 all_data = np.vstack(data_list)
 
-coords_3d = np.column_stack([
-    all_data[:, 3],  # X
-    all_data[:, 4],  # Y
-    all_data[:, 0] * 0.01  # Layer * 0.01
-])
+coords_3d = np.column_stack(
+    [all_data[:, 3], all_data[:, 4], all_data[:, 0] * 0.01]  # X  # Y  # Layer * 0.01
+)
 
 print(f"Total data points: {coords_3d.shape[0]}")
-print(f"Coordinate ranges:")
+print("Coordinate ranges:")
 print(f"  X: [{coords_3d[:, 0].min():.2f}, {coords_3d[:, 0].max():.2f}]")
 print(f"  Y: [{coords_3d[:, 1].min():.2f}, {coords_3d[:, 1].max():.2f}]")
 print(f"  Z: [{coords_3d[:, 2].min():.2f}, {coords_3d[:, 2].max():.2f}]")
@@ -43,11 +44,7 @@ print(f"\nDownsampled to: {coords_sampled.shape[0]} points for clustering")
 print("\nPerforming MiniBatchKMeans clustering...")
 
 clustering = MiniBatchKMeans(
-    n_clusters=n_clusters,
-    batch_size=5000,
-    random_state=42,
-    verbose=1,
-    max_iter=100
+    n_clusters=n_clusters, batch_size=5000, random_state=42, verbose=1, max_iter=100
 )
 sample_labels = clustering.fit_predict(coords_sampled)
 
@@ -66,7 +63,7 @@ for i in range(0, len(coords_3d), batch_size):
 print("Label prediction complete")
 
 fig = plt.figure(figsize=(14, 10))
-ax = fig.add_subplot(111, projection='3d')
+ax = fig.add_subplot(111, projection="3d")
 
 viz_downsample = max(1, len(coords_3d) // 50000)  # Max 50k points for vizualization
 viz_coords = coords_3d[::viz_downsample]
@@ -77,27 +74,29 @@ print(f"\nVisualizing {len(viz_coords)} points...")
 colors = plt.cm.Spectral(np.linspace(0, 1, n_clusters))
 
 scatter = ax.scatter(
-    viz_coords[:, 0], 
-    viz_coords[:, 1], 
+    viz_coords[:, 0],
+    viz_coords[:, 1],
     viz_coords[:, 2],
     c=viz_labels,
-    cmap='Spectral',
+    cmap="Spectral",
     s=1,
-    alpha=0.6
+    alpha=0.6,
 )
 
-ax.set_xlabel('X (mm)')
-ax.set_ylabel('Y (mm)')
-ax.set_zlabel('Z (Layer)')
-ax.set_title(f'Mini K Means Clustering of AMPM Data\n{n_clusters} clusters, {len(coords_3d):,} total points')
+ax.set_xlabel("X (mm)")
+ax.set_ylabel("Y (mm)")
+ax.set_zlabel("Z (Layer)")
+ax.set_title(
+    f"Mini K Means Clustering of AMPM Data\n{n_clusters} clusters, {len(coords_3d):,} total points"
+)
 
-plt.colorbar(scatter, ax=ax, label='Cluster ID', shrink=0.5)
+plt.colorbar(scatter, ax=ax, label="Cluster ID", shrink=0.5)
 plt.tight_layout()
 plt.show()
 
 print("\nSaving cluster assignments...")
 clustered_data = np.column_stack([all_data, labels])
-np.save('ampm_clustered_data.npy', clustered_data)
+np.save("ampm_clustered_data.npy", clustered_data)
 print("Saved to: ampm_clustered_data.npy")
 
 print("\nCluster statistics:")

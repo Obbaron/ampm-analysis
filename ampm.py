@@ -1210,6 +1210,59 @@ def analyze_parts_distribution(data, plot_parts=None, parts_data=None) -> None:
     fig.show()
 
 
+def plot_layer(data: np.ndarray, layer_number: int, diode: str = "meltpool"):
+    """
+    Plots X-Y meltpool heatmap for a single layer using Plotly.
+
+    Parameters:
+        data (np.ndarray): Array with columns
+            [Layer, Time, Dwell, X, Y, Plasma, Meltpool, Part ID]
+        layer_number (int): Layer number to plot
+    """
+
+    LAYER_COL = 0
+    X_COL = 3
+    Y_COL = 4
+    MELTPOOL_COL = 6
+
+    if diode.lower() == "plasma":
+        MELTPOOL_COL = 5
+
+    layer_data = data[data[:, LAYER_COL] == layer_number]
+
+    if layer_data.size == 0:
+        raise ValueError(f"No data found for layer {layer_number}")
+
+    x = layer_data[:, X_COL]
+    y = layer_data[:, Y_COL]
+    meltpool = layer_data[:, MELTPOOL_COL]
+
+    fig = go.Figure(
+        data=go.Scattergl(
+            x=x,
+            y=y,
+            mode="markers",
+            marker=dict(
+                size=5,
+                color=meltpool,
+                colorscale="Bluered",
+                colorbar=dict(title=diode.lower()),
+                showscale=True,
+            ),
+        )
+    )
+
+    fig.update_layout(
+        title=f"Meltpool Heatmap - Layer {layer_number}",
+        xaxis_title="X Position",
+        yaxis_title="Y Position",
+        yaxis=dict(scaleanchor="x", scaleratio=1),  # keep aspect ratio correct
+        template="plotly_dark",
+    )
+
+    fig.show()
+
+
 # Example usage:
 if __name__ == "__main__":
 
