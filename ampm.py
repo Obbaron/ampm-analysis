@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import h5py
@@ -38,6 +39,10 @@ def _get_cross_section(z: float, part_mesh: trimesh.Trimesh) -> MultiPolygon | N
     """
     Slice an STL mesh at height z and return the cross-section as a MultiPolygon.
 
+    Uses trimesh.intersections.mesh_plane() to get raw line segments, then
+    assembles them into polygons with shapely. This bypasses trimesh's Path3D
+    to Path2D conversion which is slow due to scipy sparse graph operations.
+
     Parameters
     ----------
     z : float
@@ -51,24 +56,82 @@ def _get_cross_section(z: float, part_mesh: trimesh.Trimesh) -> MultiPolygon | N
         Cross-sectional geometry at height z, or None if no geometry exists.
     """
     try:
-        section = part_mesh.section(plane_origin=[0, 0, z], plane_normal=[0, 0, 1])
-        if section is None:
+        lines = trimesh.intersections.mesh_plane(
+            part_mesh,
+            plane_normal=[0, 0, 1],
+            plane_origin=[0, 0, z],
+        )
+        if lines is None or len(lines) == 0:
             return None
-        cross_section, _ = section.to_2D()
-        polygons = cross_section.polygons_full
-        if not polygons:
+
+        # lines is (N, 2, 3) — N line segments, each with 2 XYZ endpoints.
+        # Drop Z, reshape to (N, 2, 2) and create all linestrings in one vectorised call.
+        segments_2d = lines[:, :, :2]  # (N, 2, 2)
+        geoms = shapely.linestrings(segments_2d)
+        result = shapely.polygonize(geoms)
+        polys = list(result.geoms)
+        if not polys:
             return None
-        result = unary_union(polygons)
-        if result.is_empty:
+        merged = unary_union(polys)
+        if merged.is_empty:
             return None
-        if isinstance(result, Polygon):
-            return MultiPolygon([result])
-        if isinstance(result, MultiPolygon):
-            return result
+        if isinstance(merged, Polygon):
+            return MultiPolygon([merged])
+        if isinstance(merged, MultiPolygon):
+            return merged
         return None
     except Exception as e:
         logger.error(f"_get_cross_section error at z={z:.4f}mm: {e}")
         return None
+
+
+def _mask_layer_worker(
+    args: tuple[int, np.ndarray, str, float],
+) -> tuple[int, np.ndarray | None, str]:
+    """
+    Module-level worker for multiprocessing — loads the STL mesh independently
+    in each process to avoid IPC serialisation of the trimesh object.
+
+    Parameters
+    ----------
+    args : tuple
+        (layer_number, data_array, stl_path_str, layer_thickness)
+
+    Returns
+    -------
+    tuple[int, np.ndarray | None, str]
+        (layer_number, masked_array_or_None, log_message)
+    """
+    j, data, stl_path_str, layer_thickness = args
+    part_mesh = trimesh.load(stl_path_str, force="mesh", process=False)
+    z = (j - 0.5) * layer_thickness
+    cross_section = _get_cross_section(z, part_mesh)
+
+    if cross_section is None or cross_section.is_empty:
+        return j, None, f"  Layer {j}: no STL cross-section at z={z:.4f}mm, skipping..."
+
+    minx, miny, maxx, maxy = cross_section.bounds
+    points_xy = data[:, [_X_COL, _Y_COL]]
+    bbox_mask = (
+        (points_xy[:, 0] >= minx)
+        & (points_xy[:, 0] <= maxx)
+        & (points_xy[:, 1] >= miny)
+        & (points_xy[:, 1] <= maxy)
+    )
+    candidates = points_xy[bbox_mask]
+
+    if len(candidates) == 0:
+        return j, None, f"  Layer {j}: no points inside STL, skipping..."
+
+    shapely.prepare(cross_section)
+    stl_mask = np.zeros(len(data), dtype=bool)
+    stl_mask[bbox_mask] = shapely.covers(cross_section, shapely.points(candidates))
+
+    n_masked = stl_mask.sum()
+    if n_masked == 0:
+        return j, None, f"  Layer {j}: no points inside STL, skipping..."
+
+    return j, data[stl_mask], f"  Layer {j}: {n_masked} / {len(data)} points inside STL"
 
 
 class AMPMData:
@@ -286,43 +349,34 @@ class AMPMData:
             raise ValueError(f"layer_thickness must be positive, got {layer_thickness}")
 
         logger.info(f"Loading STL: {stl_path.name}...")
-        part_mesh = trimesh.load(str(stl_path), force="mesh")
-        if not isinstance(part_mesh, trimesh.Trimesh):
+        # Validate the STL before dispatching to workers.
+        test_mesh = trimesh.load(str(stl_path), force="mesh", process=False)
+        if not isinstance(test_mesh, trimesh.Trimesh):
             raise TypeError(
-                f"Expected Trimesh after loading STL, got {type(part_mesh).__name__}. "
+                f"Expected Trimesh after loading STL, got {type(test_mesh).__name__}. "
                 f"Ensure the STL file contains a single mesh."
             )
 
         logger.info("Masking layers to STL cross-sections...")
-        to_delete = []
+        worker_args = [
+            (j, data, str(stl_path), layer_thickness) for j, data in self._data.items()
+        ]
 
-        for j, data in self._data.items():
-            z = (j - 0.5) * layer_thickness  # midpoint of layer j
-            cross_section = _get_cross_section(z, part_mesh)
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(_mask_layer_worker, args): args[0]
+                for args in worker_args
+            }
+            results = {}
+            for future in as_completed(futures):
+                j, masked, msg = future.result()
+                if masked is None:
+                    logger.warning(msg)
+                else:
+                    logger.info(msg)
+                results[j] = masked
 
-            if cross_section is None or cross_section.is_empty:
-                logger.warning(
-                    f"  Layer {j}: no STL cross-section at z={z:.4f}mm, skipping..."
-                )
-                to_delete.append(j)
-                continue
-
-            points_xy = data[:, [_X_COL, _Y_COL]]
-            shapely.prepare(cross_section)
-            stl_mask = shapely.covers(cross_section, shapely.points(points_xy))
-
-            n_masked = stl_mask.sum()
-            logger.info(f"  Layer {j}: {n_masked} / {len(data)} points inside STL")
-
-            if n_masked == 0:
-                logger.warning(f"  Layer {j}: no points inside STL, skipping...")
-                to_delete.append(j)
-                continue
-
-            self._data[j] = data[stl_mask]
-
-        for j in to_delete:
-            del self._data[j]
+        self._data = {j: arr for j, arr in results.items() if arr is not None}
 
         logger.info(f"\nSUCCESSFULLY MASKED {len(self._data)} LAYERS\n")
 
@@ -417,9 +471,17 @@ if __name__ == "__main__":
     fullplate_stl = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_ElDesF_CranialRepeat_20260127/STL/fullplate/JR306_FULLPLATE_STL.stl"
     save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR309_masked_corrected.h5"
 
-    data = AMPMData.from_directory(ampm_dir, 165, 172)
-    data.mask(fullplate_stl)
-    data.correct()
-    data.save(save_path)
+    import cProfile
+    import pstats
 
-    # data = AMPMData.load(save_path)
+    # data = AMPMData.from_directory(ampm_dir, 165, 265)
+    # data.save(save_path)
+
+    data = AMPMData.load(save_path)
+
+    with cProfile.Profile() as pr:
+        data.mask(fullplate_stl)
+
+    stats = pstats.Stats(pr)
+    stats.sort_stats("cumulative")
+    stats.print_stats(20)
