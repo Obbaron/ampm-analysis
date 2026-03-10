@@ -1,4 +1,4 @@
-# ampmdata
+# ampm-replacement
 
 Python tools for importing, masking, and correcting AMPM process monitoring data from the Renishaw 500S metal 3D printer.
 
