@@ -7,7 +7,7 @@ Python tools for importing, masking, and correcting AMPM process monitoring data
 Clone the repository and install the required dependencies:
 
 ```bash
-pip install numpy pandas shapely trimesh networkx scipy
+pip install numpy pandas shapely trimesh networkx scipy h5py
 ```
 
 ## Usage
