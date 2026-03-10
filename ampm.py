@@ -89,7 +89,8 @@ class AMPMData:
     )
 
     def __init__(self, data: dict[int, np.ndarray]) -> None:
-        self._data = data
+        self.data = data
+        self.parts: pd.DataFrame | None = None
 
     @staticmethod
     def _get_cross_section(z: float, part_mesh: trimesh.Trimesh) -> MultiPolygon | None:
@@ -196,19 +197,103 @@ class AMPMData:
         )
 
     def __len__(self) -> int:
-        return len(self._data)
+        return len(self.data)
 
     def __getitem__(self, layer: int) -> np.ndarray:
-        return self._data[layer]
+        return self.data[layer]
 
     def __iter__(self):
-        return iter(self._data)
+        return iter(self.data)
 
     def items(self):
-        return self._data.items()
+        return self.data.items()
 
     def keys(self):
-        return self._data.keys()
+        return self.data.keys()
+
+    def import_parts(
+        self,
+        filepath: Path | str,
+        parametric: bool = False,
+    ) -> None:
+        """
+        Import part metadata from a QuantAM exported parts CSV and store as self.parts.
+
+        Parameters
+        ----------
+        filepath : Path | str
+            Path to the QuantAM exported parts CSV file.
+        parametric : bool, optional
+            Include Hatch Power, Hatch Point Distance, Hatch Exposure Time (default: False).
+        """
+        filepath = Path(filepath) if isinstance(filepath, str) else filepath
+        if not filepath.exists():
+            raise FileNotFoundError(f"File not found: {filepath}")
+
+        parts_data = pd.read_csv(
+            filepath,
+            usecols=[1, 3, 4, 5, 6],
+            names=[
+                "Part ID",
+                "Layer Thickness",
+                "X Position",
+                "Y Position",
+                "Layers Count",
+            ],
+            skiprows=6,
+            on_bad_lines="skip",
+            skip_blank_lines=True,
+        )
+
+        parametric_possible = "Tab - 10" in parts_data["Part ID"].values
+
+        parts_idx = []
+        for value in parts_data["Part ID"]:
+            if pd.isna(value):
+                break
+            if isinstance(value, str) and value.startswith("Tab - "):
+                break
+            parts_idx.append(int(value) - 1)
+        parts_data = parts_data.loc[parts_idx]
+
+        if parametric and not parametric_possible:
+            raise ValueError(f"No parametric data found in file: {filepath}")
+
+        if parametric and parametric_possible:
+            skipped_rows = len(parts_idx) + 10
+            first_col = pd.read_csv(
+                filepath,
+                usecols=[1],
+                names=["Part ID"],
+                skiprows=skipped_rows,
+                on_bad_lines="skip",
+                skip_blank_lines=True,
+            )
+            full_parts_list = []
+            for value in first_col["Part ID"]:
+                if pd.isna(value):
+                    break
+                if isinstance(value, str) and value.startswith("Tab - "):
+                    break
+                if isinstance(value, str):
+                    base_value = value.replace(".1", "").replace(".s", "")
+                    if base_value in parts_data["Part ID"].values:
+                        full_parts_list.append(value)
+            if "Tab - 10" and "Tab - 11" in first_col["Part ID"].values:
+                skipped_rows = 9 * (len(full_parts_list) + 4) + (len(parts_idx) + 10)
+            parts_params = pd.read_csv(
+                filepath,
+                usecols=[7, 9, 10],
+                names=["Hatch Power", "Hatch Point Distance", "Hatch Exposure Time"],
+                skiprows=skipped_rows,
+                nrows=len(parts_idx),
+                on_bad_lines="skip",
+                skip_blank_lines=True,
+            )
+            parts_data = pd.concat([parts_data, parts_params], axis=1)
+
+        self.parts = parts_data
+        logger.info(f"Imported {len(parts_data)} parts from {filepath.name}")
 
     @classmethod
     def from_directory(
@@ -389,8 +474,7 @@ class AMPMData:
 
         logger.info("Masking layers to STL cross-sections...")
         worker_args = [
-            (j, data, vertices, faces, layer_thickness)
-            for j, data in self._data.items()
+            (j, data, vertices, faces, layer_thickness) for j, data in self.data.items()
         ]
 
         try:
@@ -407,14 +491,14 @@ class AMPMData:
             logger.warning("Masking interrupted by user.")
             raise
 
-        self._data = {}
+        self.data = {}
         for j, (masked, msg) in sorted(results.items()):
             if masked is None:
                 logger.warning(msg)
             else:
                 logger.info(msg)
-                self._data[j] = masked
-        logger.info(f"\nSUCCESSFULLY MASKED {len(self._data)} LAYERS\n")
+                self.data[j] = masked
+        logger.info(f"\nSUCCESSFULLY MASKED {len(self.data)} LAYERS\n")
 
     def correct(self) -> None:
         """
@@ -427,7 +511,7 @@ class AMPMData:
         """
         logger.info("APPLYING XY MELTPOOL CORRECTION...")
 
-        for j, data in self._data.items():
+        for j, data in self.data.items():
             x_vals = data[:, _X_COL]
             y_vals = data[:, _Y_COL]
             lv_vals = data[:, _LV_COL]
@@ -456,7 +540,7 @@ class AMPMData:
 
             logger.info(f"  Layer {j}: correction applied to {len(data)} points")
 
-        logger.info(f"\nSUCCESSFULLY CORRECTED {len(self._data)} LAYERS\n")
+        logger.info(f"\nSUCCESSFULLY CORRECTED {len(self.data)} LAYERS\n")
 
     def save(self, path: Path | str) -> None:
         """
@@ -472,9 +556,9 @@ class AMPMData:
         """
         path = Path(path) if isinstance(path, str) else path
         with h5py.File(path, "w") as f:
-            for j, data in self._data.items():
+            for j, data in self.data.items():
                 f.create_dataset(str(j), data=data)
-        logger.info(f"Saved {len(self._data)} layers to {path.name}")
+        logger.info(f"Saved {len(self.data)} layers to {path.name}")
 
     @classmethod
     def load(cls, path: Path | str) -> "AMPMData":
@@ -508,9 +592,12 @@ if __name__ == "__main__":
     save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR309_masked_corrected.h5"
     parts_csv = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_parts.csv"
 
-    data = AMPMData.from_directory(ampm_dir, 165, 265)
-    data.mask(fullplate_stl)
-    data.correct()  # main machine only
-    data.save(save_path)
+    # data = AMPMData.from_directory(ampm_dir, 165, 265)
+    # data.mask(fullplate_stl)
+    # data.correct()
+    # data.save(save_path)
 
-    # data = AMPMData.load(save_path)
+    data = AMPMData.load(save_path)
+    data.import_parts(parts_csv, parametric=True)
+
+    print(data.parts)
