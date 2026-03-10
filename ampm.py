@@ -415,11 +415,11 @@ class AMPMData:
 if __name__ == "__main__":
     ampm_dir = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_AMPM/[3] Export Packets"
     fullplate_stl = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_ElDesF_CranialRepeat_20260127/STL/fullplate/JR306_FULLPLATE_STL.stl"
-    save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/_JR309_masked_corrected.h5"
+    save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR309_masked_corrected.h5"
 
     data = AMPMData.from_directory(ampm_dir, 165, 172)
     data.mask(fullplate_stl)
-    data.save(save_path)
     data.correct()
+    data.save(save_path)
 
     # data = AMPMData.load(save_path)
