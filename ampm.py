@@ -56,19 +56,19 @@ def _get_cross_section(z: float, part_mesh: trimesh.Trimesh) -> MultiPolygon | N
         Cross-sectional geometry at height z, or None if no geometry exists.
     """
     try:
-        lines = trimesh.intersections.mesh_plane(
+        raw = trimesh.intersections.mesh_plane(
             part_mesh,
             plane_normal=[0, 0, 1],
             plane_origin=[0, 0, z],
         )
+        lines: np.ndarray = np.asarray(raw)
         if lines is None or len(lines) == 0:
             return None
-
         # lines is (N, 2, 3) — N line segments, each with 2 XYZ endpoints.
         # Drop Z, reshape to (N, 2, 2) and create all linestrings in one vectorised call.
         segments_2d = lines[:, :, :2]  # (N, 2, 2)
-        geoms = shapely.linestrings(segments_2d)
-        result = shapely.polygonize(geoms)
+        geoms = shapely.linestrings(segments_2d)  # type: ignore[assignment]
+        result = shapely.polygonize(geoms.tolist())  # type: ignore[attr-defined]
         polys = list(result.geoms)
         if not polys:
             return None
@@ -80,30 +80,29 @@ def _get_cross_section(z: float, part_mesh: trimesh.Trimesh) -> MultiPolygon | N
         if isinstance(merged, MultiPolygon):
             return merged
         return None
-    except Exception as e:
-        logger.error(f"_get_cross_section error at z={z:.4f}mm: {e}")
+    except Exception:
         return None
 
 
 def _mask_layer_worker(
-    args: tuple[int, np.ndarray, str, float],
+    args: tuple[int, np.ndarray, np.ndarray, np.ndarray, float],
 ) -> tuple[int, np.ndarray | None, str]:
     """
-    Module-level worker for multiprocessing — loads the STL mesh independently
-    in each process to avoid IPC serialisation of the trimesh object.
+    Module-level worker for threading. Reconstructs the mesh from vertices and
+    faces to avoid thread-safety issues with trimesh.load().
 
     Parameters
     ----------
     args : tuple
-        (layer_number, data_array, stl_path_str, layer_thickness)
+        (layer_number, data_array, mesh_vertices, mesh_faces, layer_thickness)
 
     Returns
     -------
     tuple[int, np.ndarray | None, str]
         (layer_number, masked_array_or_None, log_message)
     """
-    j, data, stl_path_str, layer_thickness = args
-    part_mesh = trimesh.load(stl_path_str, force="mesh", process=False)
+    j, data, vertices, faces, layer_thickness = args
+    part_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
     z = (j - 0.5) * layer_thickness
     cross_section = _get_cross_section(z, part_mesh)
 
@@ -282,15 +281,14 @@ class AMPMData:
             "MeltVIEW melt pool (mean)",
         ]
         num_layers = end_layer - start_layer + 1
-        data = {}
         logger.info(f"IMPORTING {num_layers} LAYERS...")
 
-        for j in range(start_layer, end_layer + 1):
+        def _read_layer(j: int) -> tuple[int, np.ndarray | None, str, bool]:
+            """Read and ROI-filter a single layer file. Returns (layer, array_or_None, msg, is_warning)."""
             filename = f"Packet data for layer {j}, laser {laser_number}.txt"
             full_path = filepath / filename
             if not full_path.exists():
-                logger.warning(f"File not found: {filename}, skipping...")
-                continue
+                return j, None, f"File not found: {filename}, skipping...", True
             layer_data = pd.read_csv(
                 full_path,
                 sep="\t",
@@ -299,8 +297,11 @@ class AMPMData:
             )
             layer_data = layer_data.astype(np.float32)
             if np.any(np.isinf(layer_data.to_numpy())):
-                logger.warning(
-                    f"  Layer {j}: inf values detected after float32 cast, possible overflow"
+                return (
+                    j,
+                    None,
+                    f"Layer {j}: inf values detected after float32 cast, possible overflow",
+                    True,
                 )
             roi_mask = (
                 (layer_data["Demand X"] > x_min)
@@ -309,13 +310,35 @@ class AMPMData:
                 & (layer_data["Demand Y"] < y_max)
             )
             n_filtered = roi_mask.sum()
-            logger.info(
-                f"  Layer {j}: found {n_filtered} / {len(layer_data)} points in ROI"
-            )
             if n_filtered == 0:
-                logger.warning(f"  Layer {j} has no points in ROI, skipping...")
-                continue
-            data[j] = layer_data.to_numpy()[roi_mask]
+                return j, None, f"Layer {j} has no points in ROI, skipping...", True
+            arr = layer_data.to_numpy()[roi_mask]
+            return (
+                j,
+                arr,
+                f"  Layer {j}: found {n_filtered} / {len(layer_data)} points in ROI",
+                False,
+            )
+
+        with ThreadPoolExecutor() as executor:
+            futures = {
+                executor.submit(_read_layer, j): j
+                for j in range(start_layer, end_layer + 1)
+            }
+            results = {}
+            for future in as_completed(futures):
+                j, arr, msg, is_warning = future.result()
+                results[j] = (arr, msg, is_warning)
+
+        data = {}
+        for j in range(start_layer, end_layer + 1):
+            arr, msg, is_warning = results[j]
+            if is_warning:
+                logger.warning(msg)
+            else:
+                logger.info(msg)
+            if arr is not None:
+                data[j] = arr
 
         expected = set(range(start_layer, end_layer + 1))
         missing = expected - set(data.keys())
@@ -349,35 +372,45 @@ class AMPMData:
             raise ValueError(f"layer_thickness must be positive, got {layer_thickness}")
 
         logger.info(f"Loading STL: {stl_path.name}...")
-        # Validate the STL before dispatching to workers.
-        test_mesh = trimesh.load(str(stl_path), force="mesh", process=False)
-        if not isinstance(test_mesh, trimesh.Trimesh):
+        part_mesh = trimesh.load(str(stl_path), force="mesh", process=False)
+        if not isinstance(part_mesh, trimesh.Trimesh):
             raise TypeError(
-                f"Expected Trimesh after loading STL, got {type(test_mesh).__name__}. "
+                f"Expected Trimesh after loading STL, got {type(part_mesh).__name__}. "
                 f"Ensure the STL file contains a single mesh."
             )
 
-        logger.info("Masking layers to STL cross-sections...")
+        # Extract vertices and faces as plain numpy arrays — these are thread-safe
+        # to share across workers, unlike the trimesh object itself.
+        vertices = np.array(part_mesh.vertices)
+        faces = np.array(part_mesh.faces)
+
+        logger.info("Masking layers to STL cross-sections (this may take a minute)...")
         worker_args = [
-            (j, data, str(stl_path), layer_thickness) for j, data in self._data.items()
+            (j, data, vertices, faces, layer_thickness)
+            for j, data in self._data.items()
         ]
 
-        with ThreadPoolExecutor() as executor:
-            futures = {
-                executor.submit(_mask_layer_worker, args): args[0]
-                for args in worker_args
-            }
-            results = {}
-            for future in as_completed(futures):
-                j, masked, msg = future.result()
-                if masked is None:
-                    logger.warning(msg)
-                else:
-                    logger.info(msg)
-                results[j] = masked
+        try:
+            with ThreadPoolExecutor() as executor:
+                futures = {
+                    executor.submit(_mask_layer_worker, args): args[0]
+                    for args in worker_args
+                }
+                results = {}
+                for future in as_completed(futures):
+                    j, masked, msg = future.result()
+                    results[j] = (masked, msg)
+        except KeyboardInterrupt:
+            logger.warning("Masking interrupted by user.")
+            raise
 
-        self._data = {j: arr for j, arr in results.items() if arr is not None}
-
+        self._data = {}
+        for j, (masked, msg) in sorted(results.items()):
+            if masked is None:
+                logger.warning(msg)
+            else:
+                logger.info(msg)
+                self._data[j] = masked
         logger.info(f"\nSUCCESSFULLY MASKED {len(self._data)} LAYERS\n")
 
     def correct(self) -> None:
@@ -471,17 +504,12 @@ if __name__ == "__main__":
     fullplate_stl = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_ElDesF_CranialRepeat_20260127/STL/fullplate/JR306_FULLPLATE_STL.stl"
     save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR309_masked_corrected.h5"
 
-    import cProfile
-    import pstats
+    # First run — import, mask, and save
+    data = AMPMData.from_directory(ampm_dir, 165, 265)
+    data.mask(fullplate_stl)
+    data.save(save_path)
 
-    # data = AMPMData.from_directory(ampm_dir, 165, 265)
-    # data.save(save_path)
+    # Subsequent runs — load and correct
+    # data = AMPMData.load(save_path)
 
-    data = AMPMData.load(save_path)
-
-    with cProfile.Profile() as pr:
-        data.mask(fullplate_stl)
-
-    stats = pstats.Stats(pr)
-    stats.sort_stats("cumulative")
-    stats.print_stats(20)
+    data.correct()  # main machine only
