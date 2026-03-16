@@ -25,22 +25,16 @@ logger.addHandler(console_logger)
 logger.setLevel(logging.INFO)
 logger.propagate = False
 
-# AMPMData Columns
-_TIME_COL = 0
-_DWELL_COL = 1
-_X_COL = 2
-_Y_COL = 3
-_LV_COL = 4
-_PLASMA_COL = 5
-_MP_COL = 6
-
 
 class AMPMData:
     """
     Container for AMPM process monitoring data from a Renishaw 500S build.
 
-    Data is stored as a dict of numpy arrays, one per layer, each with 7 columns:
-    [Time, Dwell, X, Y, LaserVIEW, Plasma, Meltpool].
+    Data is stored as a dict of numpy arrays, one per layer. The column layout
+    matches the ``columns`` attribute, which records the names of loaded columns
+    in file order. By default all seven legacy columns are loaded:
+    [Start time, Duration, Demand X, Demand Y, MeltVIEW plasma (mean),
+    MeltVIEW melt pool (mean), LaserVIEW (mean)].
 
     Use the factory method AMPMData.from_directory() to load data, then call
     mask() and correct() in-place to process it.
@@ -56,7 +50,51 @@ class AMPMData:
     >>> data.mask("path/to/fullplate.stl")
     >>> data.correct()  # main machine only
     >>> print(len(data))
+
+    Load only coordinates and LaserVIEW:
+
+    >>> data = AMPMData.from_directory(
+    ...     "path/to/packets", 1, 100,
+    ...     columns=["LaserVIEW (mean)"],
+    ... )
     """
+
+    ALL_COLUMNS: list[str] = [
+        "Start time",
+        "Duration",
+        "Demand X",
+        "Demand Y",
+        "Demand focus",
+        "Demand laser power (mean)",
+        "MeltVIEW plasma (mean)",
+        "MeltVIEW melt pool (mean)",
+        "LaserVIEW (mean)",
+        "Laser back reflection (mean)",
+        "Laser output power (mean)",
+        "Demand laser power (median)",
+        "MeltVIEW plasma (median)",
+        "MeltVIEW melt pool (median)",
+        "LaserVIEW (median)",
+        "Laser back reflection (median)",
+        "Laser output power (median)",
+    ]
+
+    _REQUIRED_COLUMNS: list[str] = ["Demand X", "Demand Y"]
+
+    _DEFAULT_COLUMNS: list[str] = [
+        "Start time",
+        "Duration",
+        "LaserVIEW (mean)",
+        "MeltVIEW plasma (mean)",
+        "MeltVIEW melt pool (mean)",
+    ]
+
+    _CORRECT_COLUMNS: list[str] = [
+        "Demand X",
+        "Demand Y",
+        "LaserVIEW (mean)",
+        "MeltVIEW melt pool (mean)",
+    ]
 
     # Main 500S LaserVIEW XY correction regression model (reg_XYLv)
     _POWER_MATRIX = np.array(
@@ -88,9 +126,14 @@ class AMPMData:
         ]
     )
 
-    def __init__(self, data: dict[int, np.ndarray]) -> None:
+    def __init__(self, data: dict[int, np.ndarray], columns: list[str]) -> None:
         self.data = data
+        self.columns = columns
         self.parts: pd.DataFrame | None = None
+
+    def _col(self, name: str) -> int:
+        """Return the array column index for a named column."""
+        return self.columns.index(name)
 
     @staticmethod
     def _get_cross_section(z: float, part_mesh: trimesh.Trimesh) -> MultiPolygon | None:
@@ -141,7 +184,7 @@ class AMPMData:
 
     @staticmethod
     def _mask_layer_worker(
-        args: tuple[int, np.ndarray, np.ndarray, np.ndarray, float],
+        args: tuple[int, np.ndarray, np.ndarray, np.ndarray, float, int, int],
     ) -> tuple[int, np.ndarray | None, str]:
         """
         Worker for threaded masking. Reconstructs the mesh from vertices and
@@ -150,14 +193,15 @@ class AMPMData:
         Parameters
         ----------
         args : tuple
-            (layer_number, data_array, mesh_vertices, mesh_faces, layer_thickness)
+            (layer_number, data_array, mesh_vertices, mesh_faces,
+            layer_thickness, x_col, y_col)
 
         Returns
         -------
         tuple[int, np.ndarray | None, str]
             (layer_number, masked_array_or_None, log_message)
         """
-        j, data, vertices, faces, layer_thickness = args
+        j, data, vertices, faces, layer_thickness, x_col, y_col = args
         part_mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
         z = (j - 0.5) * layer_thickness
         cross_section = AMPMData._get_cross_section(z, part_mesh)
@@ -170,7 +214,7 @@ class AMPMData:
             )
 
         minx, miny, maxx, maxy = cross_section.bounds
-        points_xy = data[:, [_X_COL, _Y_COL]]
+        points_xy = data[:, [x_col, y_col]]
         bbox_mask = (
             (points_xy[:, 0] >= minx)
             & (points_xy[:, 0] <= maxx)
@@ -306,6 +350,7 @@ class AMPMData:
         y_min: float = -125.0,
         y_max: float = 125.0,
         laser_number: int = 4,
+        columns: list[str] | None = None,
     ) -> "AMPMData":
         """
         Import AMPM data from a directory of layer files.
@@ -328,11 +373,23 @@ class AMPMData:
             Upper y-coordinate boundary for ROI (mm) (default: 125.0).
         laser_number : int, optional
             Laser number in filename (default: 4).
+        columns : list[str] | None, optional
+            Optional columns to load in addition to the always-required
+            ``Demand X`` and ``Demand Y``. If None, the default set is loaded:
+            ``Start time``, ``Duration``, ``LaserVIEW (mean)``,
+            ``MeltVIEW plasma (mean)``, ``MeltVIEW melt pool (mean)``.
+            Pass an empty list ``[]`` to load only ``Demand X`` and
+            ``Demand Y``. All names must be present in ``AMPMData.ALL_COLUMNS``.
 
         Returns
         -------
         AMPMData
             Loaded data object.
+
+        Raises
+        ------
+        ValueError
+            If any column name in ``columns`` is not recognised.
         """
         filepath = Path(filepath) if isinstance(filepath, str) else filepath
         if not isinstance(start_layer, int) or not isinstance(end_layer, int):
@@ -361,15 +418,17 @@ class AMPMData:
         if laser_number < 1:
             raise ValueError(f"laser_number must be positive, got {laser_number}")
 
-        USECOLS = [
-            "Start time",
-            "Duration",
-            "Demand X",
-            "Demand Y",
-            "LaserVIEW (mean)",
-            "MeltVIEW plasma (mean)",
-            "MeltVIEW melt pool (mean)",
-        ]
+        requested = cls._DEFAULT_COLUMNS if columns is None else columns
+        unknown = [c for c in requested if c not in cls.ALL_COLUMNS]
+        if unknown:
+            raise ValueError(
+                f"Unrecognised column name(s): {unknown}. "
+                f"Valid columns are: {cls.ALL_COLUMNS}"
+            )
+
+        selected = set(requested) | set(cls._REQUIRED_COLUMNS)
+        USECOLS = [c for c in cls.ALL_COLUMNS if c in selected]
+
         num_layers = end_layer - start_layer + 1
         logger.info(f"IMPORTING {num_layers} LAYERS...")
 
@@ -385,6 +444,8 @@ class AMPMData:
                 usecols=USECOLS,
                 on_bad_lines="warn",
             )
+
+            layer_data = layer_data[USECOLS]  # Sometimes pandas reorders columns
             layer_data = layer_data.astype(np.float32)
             if np.any(np.isinf(layer_data.to_numpy())):
                 return (
@@ -436,7 +497,7 @@ class AMPMData:
             logger.warning(f"Missing layers after import: {sorted(missing)}")
         logger.info(f"\nSUCCESSFULLY IMPORTED {len(data)} LAYERS\n")
 
-        return cls(data)
+        return cls(data, USECOLS)
 
     def mask(
         self,
@@ -473,8 +534,11 @@ class AMPMData:
         faces = np.array(part_mesh.faces)
 
         logger.info("Masking layers to STL cross-sections...")
+        x_col = self._col("Demand X")
+        y_col = self._col("Demand Y")
         worker_args = [
-            (j, data, vertices, faces, layer_thickness) for j, data in self.data.items()
+            (j, data, vertices, faces, layer_thickness, x_col, y_col)
+            for j, data in self.data.items()
         ]
 
         try:
@@ -508,14 +572,32 @@ class AMPMData:
         500S machine. Do NOT apply this correction to data from the RBV (Reduced
         Build Volume) machine, as the regression model was fitted to the main
         machine's optical response and will produce incorrect results on the RBV.
+
+        Raises
+        ------
+        ValueError
+            If any of the columns required for correction (Demand X, Demand Y,
+            LaserVIEW (mean), MeltVIEW melt pool (mean)) were not loaded.
         """
+        missing = [c for c in self._CORRECT_COLUMNS if c not in self.columns]
+        if missing:
+            raise ValueError(
+                f"correct() requires the following columns which were not loaded: "
+                f"{missing}. Re-import with these columns included."
+            )
+
         logger.info("APPLYING XY MELTPOOL CORRECTION...")
 
+        x_col = self._col("Demand X")
+        y_col = self._col("Demand Y")
+        lv_col = self._col("LaserVIEW (mean)")
+        mp_col = self._col("MeltVIEW melt pool (mean)")
+
         for j, data in self.data.items():
-            x_vals = data[:, _X_COL]
-            y_vals = data[:, _Y_COL]
-            lv_vals = data[:, _LV_COL]
-            mp_vals = data[:, _MP_COL]
+            x_vals = data[:, x_col]
+            y_vals = data[:, y_col]
+            lv_vals = data[:, lv_col]
+            mp_vals = data[:, mp_col]
 
             point_matrix = np.column_stack([x_vals, y_vals, lv_vals])
             origin_matrix = np.column_stack(
@@ -536,7 +618,7 @@ class AMPMData:
             point_pred = point_scores @ self._COEFFICIENTS
             origin_pred = origin_scores @ self._COEFFICIENTS
 
-            data[:, _MP_COL] = mp_vals * (origin_pred / point_pred)
+            data[:, mp_col] = mp_vals * (origin_pred / point_pred)
 
             logger.info(f"  Layer {j}: correction applied to {len(data)} points")
 
@@ -546,8 +628,9 @@ class AMPMData:
         """
         Save the current state of the AMPMData object to an HDF5 file.
 
-        Each layer is stored as a dataset named by its layer number. The file
-        can also be read directly in MATLAB using h5read.
+        Each layer is stored as a dataset named by its layer number. The column
+        names are stored as a file-level attribute so they are restored on load.
+        The file can also be read directly in MATLAB using h5read.
 
         Parameters
         ----------
@@ -556,6 +639,7 @@ class AMPMData:
         """
         path = Path(path) if isinstance(path, str) else path
         with h5py.File(path, "w") as f:
+            f.attrs["columns"] = self.columns
             for j, data in self.data.items():
                 f.create_dataset(str(j), data=data)
         logger.info(f"Saved {len(self.data)} layers to {path.name}")
@@ -574,16 +658,248 @@ class AMPMData:
         -------
         AMPMData
             Loaded data object.
+
+        Notes
+        -----
+        Files saved before column tracking was introduced do not carry a
+        ``columns`` attribute. These are loaded with the legacy default column
+        order so that existing saved data continues to work.
         """
         path = Path(path) if isinstance(path, str) else path
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")
         data = {}
         with h5py.File(path, "r") as f:
+            if "columns" in f.attrs:
+                columns = np.array(f.attrs["columns"]).tolist()
+            else:
+                logger.warning(
+                    "No 'columns' attribute found in HDF5 file — assuming legacy "
+                    "column order [Start time, Duration, Demand X, Demand Y, "
+                    "MeltVIEW plasma (mean), MeltVIEW melt pool (mean), LaserVIEW (mean)]. "
+                    "Re-save with the current version to suppress this warning."
+                )
+                columns = [
+                    "Start time",
+                    "Duration",
+                    "Demand X",
+                    "Demand Y",
+                    "MeltVIEW plasma (mean)",
+                    "MeltVIEW melt pool (mean)",
+                    "LaserVIEW (mean)",
+                ]
             for key in f.keys():
                 data[int(key)] = np.array(f[key])
         logger.info(f"Loaded {len(data)} layers from {path.name}")
-        return cls(data)
+        return cls(data, columns)
+
+
+def _run_tests(ampm_dir: str, start_layer: int, end_layer: int) -> None:
+    """
+    Smoke-tests for from_directory() column import configurations.
+
+    Runs six import scenarios and validates that each produces an AMPMData object
+    with the expected columns and correct array shape. Also validates that
+    error-path cases (unknown column names, correct() on missing columns) raise
+    the expected exceptions.
+
+    Parameters
+    ----------
+    ampm_dir : str
+        Path to a directory containing real AMPM packet files.
+    start_layer : int
+        First layer to load in each test (use a small range to keep it fast).
+    end_layer : int
+        Last layer to load in each test.
+    """
+    import traceback
+
+    def _check(label: str, condition: bool, detail: str = "") -> bool:
+        suffix = f"  ({detail})" if detail else ""
+        if condition:
+            logger.info(f"  [PASS] {label}{suffix}")
+        else:
+            logger.error(f"  [FAIL] {label}{suffix}")
+        return condition
+
+    all_passed = True
+
+    logger.info("\n" + "=" * 60)
+    logger.info("AMPMData column import configuration tests")
+    logger.info("=" * 60)
+
+    logger.info("\nTest 1: Default import (columns=None)")
+    try:
+        data = AMPMData.from_directory(ampm_dir, start_layer, end_layer)
+        expected_cols = sorted(AMPMData._REQUIRED_COLUMNS + AMPMData._DEFAULT_COLUMNS)
+        ok = (
+            _check("returns AMPMData", isinstance(data, AMPMData))
+            & _check("columns stored", hasattr(data, "columns"))
+            & _check(
+                "default columns present",
+                sorted(data.columns) == expected_cols,
+                f"got {sorted(data.columns)}",
+            )
+            & _check("data non-empty", len(data) > 0)
+            & _check(
+                "array width matches column count",
+                all(arr.shape[1] == len(data.columns) for arr in data.data.values()),
+            )
+        )
+        all_passed &= ok
+    except Exception:
+        logger.error("  [FAIL] Unexpected exception")
+        logger.error(traceback.format_exc())
+        all_passed = False
+
+    logger.info("\nTest 2: Coordinates only (columns=[])")
+    try:
+        data = AMPMData.from_directory(ampm_dir, start_layer, end_layer, columns=[])
+        ok = (
+            _check("returns AMPMData", isinstance(data, AMPMData))
+            & _check(
+                "only required columns",
+                sorted(data.columns) == sorted(AMPMData._REQUIRED_COLUMNS),
+                f"got {data.columns}",
+            )
+            & _check(
+                "array has 2 columns",
+                all(arr.shape[1] == 2 for arr in data.data.values()),
+            )
+        )
+        all_passed &= ok
+    except Exception:
+        logger.error("  [FAIL] Unexpected exception")
+        logger.error(traceback.format_exc())
+        all_passed = False
+
+    logger.info("\nTest 3: Single optional column (columns=['LaserVIEW (mean)'])")
+    try:
+        data = AMPMData.from_directory(
+            ampm_dir, start_layer, end_layer, columns=["LaserVIEW (mean)"]
+        )
+        ok = (
+            _check("returns AMPMData", isinstance(data, AMPMData))
+            & _check("LaserVIEW present", "LaserVIEW (mean)" in data.columns)
+            & _check("Demand X present", "Demand X" in data.columns)
+            & _check("Demand Y present", "Demand Y" in data.columns)
+            & _check("exactly 3 columns", len(data.columns) == 3, f"got {data.columns}")
+            & _check(
+                "array has 3 columns",
+                all(arr.shape[1] == 3 for arr in data.data.values()),
+            )
+        )
+        all_passed &= ok
+    except Exception:
+        logger.error("  [FAIL] Unexpected exception")
+        logger.error(traceback.format_exc())
+        all_passed = False
+
+    logger.info("\nTest 4: All columns (columns=AMPMData.ALL_COLUMNS)")
+    try:
+        data = AMPMData.from_directory(
+            ampm_dir, start_layer, end_layer, columns=AMPMData.ALL_COLUMNS
+        )
+        ok = (
+            _check("returns AMPMData", isinstance(data, AMPMData))
+            & _check(
+                "all columns present",
+                sorted(data.columns) == sorted(AMPMData.ALL_COLUMNS),
+                f"got {data.columns}",
+            )
+            & _check(
+                f"array has {len(AMPMData.ALL_COLUMNS)} columns",
+                all(
+                    arr.shape[1] == len(AMPMData.ALL_COLUMNS)
+                    for arr in data.data.values()
+                ),
+            )
+        )
+        all_passed &= ok
+    except Exception:
+        logger.error("  [FAIL] Unexpected exception")
+        logger.error(traceback.format_exc())
+        all_passed = False
+
+    logger.info(
+        "\nTest 5: Median variants (columns=['LaserVIEW (median)', 'MeltVIEW melt pool (median)'])"
+    )
+    requested = ["LaserVIEW (median)", "MeltVIEW melt pool (median)"]
+    try:
+        data = AMPMData.from_directory(
+            ampm_dir, start_layer, end_layer, columns=requested
+        )
+        lv_idx = data.columns.index("LaserVIEW (median)")
+        mp_idx = data.columns.index("MeltVIEW melt pool (median)")
+        ok = (
+            _check("LaserVIEW (median) present", "LaserVIEW (median)" in data.columns)
+            & _check(
+                "MeltVIEW melt pool (median) present",
+                "MeltVIEW melt pool (median)" in data.columns,
+            )
+            & _check(
+                "columns in file order",
+                lv_idx > mp_idx,
+                f"LaserVIEW (median) at {lv_idx}, melt pool median at {mp_idx}",
+            )
+        )
+        all_passed &= ok
+    except Exception:
+        logger.error("  [FAIL] Unexpected exception")
+        logger.error(traceback.format_exc())
+        all_passed = False
+
+    logger.info(
+        "\nTest 6: correct() raises ValueError when required columns not loaded"
+    )
+    try:
+        data = AMPMData.from_directory(ampm_dir, start_layer, end_layer, columns=[])
+        raised = False
+        msg = ""
+        try:
+            data.correct()
+        except ValueError as exc:
+            raised = True
+            msg = str(exc)
+        ok = _check("ValueError raised", raised) & _check(
+            "error message mentions missing columns",
+            raised and "LaserVIEW (mean)" in msg and "MeltVIEW melt pool (mean)" in msg,
+            msg if raised else "",
+        )
+        all_passed &= ok
+    except Exception:
+        logger.error("  [FAIL] Unexpected exception")
+        logger.error(traceback.format_exc())
+        all_passed = False
+
+    logger.info("\nTest 7: Unknown column name raises ValueError")
+    try:
+        raised = False
+        msg = ""
+        try:
+            AMPMData.from_directory(
+                ampm_dir, start_layer, end_layer, columns=["Not A Real Column"]
+            )
+        except ValueError as exc:
+            raised = True
+            msg = str(exc)
+        ok = _check("ValueError raised", raised) & _check(
+            "error message names the bad column",
+            raised and "Not A Real Column" in msg,
+            msg if raised else "",
+        )
+        all_passed &= ok
+    except Exception:
+        logger.error("  [FAIL] Unexpected exception")
+        logger.error(traceback.format_exc())
+        all_passed = False
+
+    logger.info("\n" + "=" * 60)
+    if all_passed:
+        logger.info("[PASS] All tests passed.")
+    else:
+        logger.error("[FAIL] One or more tests failed.")
+    logger.info("=" * 60 + "\n")
 
 
 if __name__ == "__main__":
@@ -592,12 +908,12 @@ if __name__ == "__main__":
     save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR309_masked_corrected.h5"
     parts_csv = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_parts.csv"
 
-    # data = AMPMData.from_directory(ampm_dir, 165, 265)
-    # data.mask(fullplate_stl)
-    # data.correct()
-    # data.save(save_path)
+    data = AMPMData.from_directory(ampm_dir, 165, 265)
+    data.mask(fullplate_stl)
+    data.correct()
+    data.save(save_path)
 
-    data = AMPMData.load(save_path)
+    # data = AMPMData.load(save_path)
     data.import_parts(parts_csv, parametric=True)
 
     print(data.parts)
