@@ -908,12 +908,12 @@ if __name__ == "__main__":
     save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_masked_corrected.h5"
     parts_csv = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_parts.csv"
 
-    data = AMPMData.from_directory(ampm_dir, 165, 265)
-    data.mask(fullplate_stl)
-    data.correct()
-    data.save(save_path)
+    # data = AMPMData.from_directory(ampm_dir, 165, 265)
+    # data.mask(fullplate_stl)
+    # data.correct()
+    # data.save(save_path)
 
-    # data = AMPMData.load(save_path)
+    data = AMPMData.load(save_path)
     data.import_parts(parts_csv, parametric=True)
 
     print(data.parts)
