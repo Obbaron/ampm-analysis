@@ -139,7 +139,7 @@ def import_ampm_data(
 
 def find_ampm_files(project_directory: Path | str) -> dict[Path | None]:
     """
-    Locate all relavant AMPM data files in a given directory and its subdirectories.
+    Locate all relevant AMPM data files in a given directory and its subdirectories.
 
     Parameters
     ----------
@@ -151,7 +151,7 @@ def find_ampm_files(project_directory: Path | str) -> dict[Path | None]:
     project_info : dict[Path | None]
         Dictionary containing project metadata with the following keys:
         - 'project_directory' : Path
-            Path to root project directory containing all relavant files.
+            Path to root project directory containing all relevant files.
         - 'data_directory' : Path
             Path to the directory containing the AMPM packet data files.
         - 'parts_filepath' : Path | None
@@ -377,7 +377,7 @@ def cluster_data(
     layer_spacing : float, optional
         Z coords = layer number * layer spacing (default: 0.03).
     visualize : bool, optional
-        Set to True to see a decimated 3D scatter plot after cluserting (default: False).
+        Set to True to see a decimated 3D scatter plot after clustering (default: False).
 
     Returns
     -------
@@ -701,13 +701,13 @@ def assign_parts(
     return relabeled_data
 
 
-def assign_density(archi_data, parts_data) -> pd.DataFrame:
+def assign_density(archimedes_data, parts_data) -> pd.DataFrame:
     """
-    Add density column to parts_data by looking up values from archi_data.
+    Add density column to parts_data by looking up values from archimedes_data.
 
     Parameters
     ----------
-    archi_data : pd.DataFrame
+    archimedes_data : pd.DataFrame
         Columns: [Speed (mm/s), Power (W), Density AVG (g/cm^3)].
     parts_data : pd.DataFrame
         Output from get_parts().
@@ -736,9 +736,9 @@ def assign_density(archi_data, parts_data) -> pd.DataFrame:
         hatch_speed = row["Hatch Speed"]
         hatch_power = float(row["Hatch Power"])
 
-        density_row = archi_data[
-            (archi_data["Speed (mm/s)"] == hatch_speed)
-            & (archi_data["Power (W)"] == hatch_power)
+        density_row = archimedes_data[
+            (archimedes_data["Speed (mm/s)"] == hatch_speed)
+            & (archimedes_data["Power (W)"] == hatch_power)
         ]
 
         if len(density_row) > 0:
@@ -871,13 +871,13 @@ def find_neighbors(
     logger.info(f"Total points: {len(coords_3d):,}")
 
     logger.info("Fitting NearestNeighbors model...")
-    nbrs = NearestNeighbors(n_neighbors=k)
-    nbrs.fit(coords_3d)
+    neighbors = NearestNeighbors(n_neighbors=k)
+    neighbors.fit(coords_3d)
 
     logger.info(
         f"  Computing distances to {k}th nearest neighbor for each point (this may take some time)...\n"
     )
-    distances, indices = nbrs.kneighbors(coords_3d)
+    distances, indices = neighbors.kneighbors(coords_3d)
 
     k_distances = distances[:, -1]
 
