@@ -213,13 +213,13 @@ class AMPMData:
                 f"  Layer {j}: no STL cross-section at z={z:.4f}mm, skipping...",
             )
 
-        minx, miny, maxx, maxy = cross_section.bounds
+        min_x, min_y, max_x, max_y = cross_section.bounds
         points_xy = data[:, [x_col, y_col]]
         bbox_mask = (
-            (points_xy[:, 0] >= minx)
-            & (points_xy[:, 0] <= maxx)
-            & (points_xy[:, 1] >= miny)
-            & (points_xy[:, 1] <= maxy)
+            (points_xy[:, 0] >= min_x)
+            & (points_xy[:, 0] <= max_x)
+            & (points_xy[:, 1] >= min_y)
+            & (points_xy[:, 1] <= max_y)
         )
         candidates = points_xy[bbox_mask]
 
@@ -389,7 +389,7 @@ class AMPMData:
         Raises
         ------
         ValueError
-            If any column name in ``columns`` is not recognised.
+            If any column name in ``columns`` is not recognized.
         """
         filepath = Path(filepath) if isinstance(filepath, str) else filepath
         if not isinstance(start_layer, int) or not isinstance(end_layer, int):
@@ -422,7 +422,7 @@ class AMPMData:
         unknown = [c for c in requested if c not in cls.ALL_COLUMNS]
         if unknown:
             raise ValueError(
-                f"Unrecognised column name(s): {unknown}. "
+                f"Unrecognized column name(s): {unknown}. "
                 f"Valid columns are: {cls.ALL_COLUMNS}"
             )
 
