@@ -692,6 +692,478 @@ class AMPMData:
         self.parts = parts_data
         logger.info(f"Imported {len(parts_data)} parts from {filepath.name}")
 
+    # ── Plotting ───────────────────────────────────────────────────────────────
+
+    def plot(
+        self,
+        kind: str,
+        column: str | list[str],
+        *,
+        layers: int | list[int] | None = None,
+        aggregation: str = "mean",
+        percentile_band: bool = True,
+        layer_thickness: float = 0.03,
+        volume_max_points: int = 500_000,
+        colorscale: str = "Plasma",
+        marker_size: int = 2,
+        zmin: float | None = None,
+        zmax: float | None = None,
+        title: str | None = None,
+    ) -> "go.Figure":
+        """
+        Visualise AMPM data using Plotly.
+
+        Parameters
+        ----------
+        kind : str
+            Plot type. One of:
+
+            ``"heatmap"``
+                XY scatter plot coloured by *column*. A single layer produces a
+                static figure; a list (or ``None`` for all layers) produces a
+                figure with an interactive layer slider and Play/Pause buttons.
+
+            ``"line"``
+                *column* aggregated per layer, plotted against layer number.
+                *column* may be a list of strings to overlay multiple signals on
+                the same axes. A shaded band shows the 10th–90th percentile
+                spread across scan points within each layer.
+
+            ``"volume"``
+                3D scatter with X/Y from the scan coordinates and Z equal to
+                layer number × *layer_thickness*, coloured by *column*.
+                Automatically downsampled to *volume_max_points* if needed.
+
+        column : str | list[str]
+            Column name(s) to visualise. Any loaded column is valid, including
+            ``"Start time"`` (laser path order), ``"Duration"``,
+            ``"Demand X"``, ``"Demand Y"``, signal means/medians, etc.
+            A list is only meaningful for ``kind="line"``; for ``"heatmap"``
+            and ``"volume"`` only the first element is used.
+        layers : int | list[int] | None, optional
+            Layers to include.
+
+            * ``int``  — single layer (``"heatmap"`` produces a static figure).
+            * ``list`` — explicit ordered layer list.
+            * ``None`` — all loaded layers (default).
+
+            For ``"line"`` this filters which layers contribute to the
+            per-layer aggregation.
+        aggregation : str, optional
+            ``kind="line"`` only. Function applied to reduce each layer's point
+            values to a scalar. One of ``"mean"``, ``"median"``, ``"min"``,
+            ``"max"`` (default: ``"mean"``).
+        percentile_band : bool, optional
+            ``kind="line"`` only. Overlay a shaded 10th–90th percentile band
+            around each aggregated line (default: ``True``).
+        layer_thickness : float, optional
+            ``kind="volume"`` only. Converts layer number to physical Z
+            coordinate in mm (default: ``0.03``).
+        volume_max_points : int, optional
+            ``kind="volume"`` only. Maximum total scatter points across all
+            layers. Each layer is uniformly downsampled if the total exceeds
+            this limit (default: ``500_000``).
+        colorscale : str, optional
+            Plotly colorscale name used for ``"heatmap"`` and ``"volume"``
+            (default: ``"Plasma"``).
+        marker_size : int, optional
+            Marker diameter in pixels for ``"heatmap"`` and ``"volume"``
+            (default: ``2``).
+        zmin, zmax : float | None, optional
+            Fixed colour-axis limits for ``"heatmap"`` and ``"volume"``. When
+            ``None`` (default) the limits are the full min and max of *column*
+            across all plotted layers.
+        title : str | None, optional
+            Figure title. Auto-generated from *kind* and *column* when ``None``.
+
+        Returns
+        -------
+        go.Figure
+            Call ``.show()`` to display interactively, ``.write_html()`` to
+            save as a standalone HTML file, or ``.write_image()`` to export a
+            static image (requires the *kaleido* package).
+
+        Raises
+        ------
+        ValueError
+            If *kind* is unrecognised, any *column* is not loaded, *aggregation*
+            is unrecognised, or any requested layer is absent from the data.
+
+        Examples
+        --------
+        Laser path order for a single layer:
+
+        >>> fig = data.plot("heatmap", "Start time", layers=42)
+        >>> fig.show()
+
+        Meltpool signal with a layer slider:
+
+        >>> fig = data.plot("heatmap", "MeltVIEW melt pool (mean)",
+        ...                 layers=list(range(1, 101)))
+        >>> fig.show()
+
+        Two signals on one line chart, no percentile band:
+
+        >>> fig = data.plot("line",
+        ...                 ["LaserVIEW (mean)", "MeltVIEW melt pool (mean)"],
+        ...                 percentile_band=False)
+        >>> fig.show()
+
+        3D volume coloured by LaserVIEW, clipped colour range:
+
+        >>> fig = data.plot("volume", "LaserVIEW (mean)", zmin=0, zmax=5000)
+        >>> fig.show()
+        """
+        import plotly.graph_objects as go
+
+        _KINDS = ("heatmap", "line", "volume")
+        if kind not in _KINDS:
+            raise ValueError(f"kind must be one of {_KINDS}, got '{kind}'")
+
+        # Normalise column to a list
+        columns = [column] if isinstance(column, str) else list(column)
+
+        bad_cols = [c for c in columns if c not in self.columns]
+        if bad_cols:
+            raise ValueError(
+                f"Column(s) not loaded: {bad_cols}. " f"Available: {self.columns}"
+            )
+
+        if kind in ("heatmap", "volume") and len(columns) > 1:
+            logger.warning(
+                f"plot(kind='{kind}') accepts a single column; "
+                f"ignoring {columns[1:]} and using '{columns[0]}'."
+            )
+
+        # Resolve layer list
+        if layers is None:
+            layer_list = sorted(self.data.keys())
+        elif isinstance(layers, int):
+            layer_list = [layers]
+        else:
+            layer_list = sorted(layers)
+
+        missing = [l for l in layer_list if l not in self.data]
+        if missing:
+            raise ValueError(f"Layers not found in loaded data: {missing}")
+
+        if kind == "heatmap":
+            return self._plot_heatmap(
+                columns[0],
+                layer_list,
+                colorscale=colorscale,
+                marker_size=marker_size,
+                zmin=zmin,
+                zmax=zmax,
+                title=title,
+            )
+        if kind == "line":
+            return self._plot_line(
+                columns,
+                layer_list,
+                aggregation=aggregation,
+                percentile_band=percentile_band,
+                title=title,
+            )
+        # kind == "volume"
+        return self._plot_volume(
+            columns[0],
+            layer_list,
+            layer_thickness=layer_thickness,
+            max_points=volume_max_points,
+            colorscale=colorscale,
+            marker_size=marker_size,
+            zmin=zmin,
+            zmax=zmax,
+            title=title,
+        )
+
+    def _plot_heatmap(
+        self,
+        column: str,
+        layer_list: list[int],
+        *,
+        colorscale: str,
+        marker_size: int,
+        zmin: float | None,
+        zmax: float | None,
+        title: str | None,
+    ) -> "go.Figure":
+        import plotly.graph_objects as go
+
+        x_col = self._col("Demand X")
+        y_col = self._col("Demand Y")
+        c_col = self._col(column)
+
+        all_vals = np.concatenate([self.data[l][:, c_col] for l in layer_list])
+        _zmin = float(np.nanmin(all_vals)) if zmin is None else zmin
+        _zmax = float(np.nanmax(all_vals)) if zmax is None else zmax
+
+        colorbar_cfg = dict(title=dict(text=column, side="right"))
+        hover = (
+            "X: %{x:.2f} mm<br>Y: %{y:.2f} mm<br>"
+            + column
+            + ": %{marker.color:.4f}<extra></extra>"
+        )
+
+        def _trace(layer: int) -> "go.Scattergl":
+            arr = self.data[layer]
+            return go.Scattergl(
+                x=arr[:, x_col],
+                y=arr[:, y_col],
+                mode="markers",
+                marker=dict(
+                    color=arr[:, c_col],
+                    colorscale=colorscale,
+                    cmin=_zmin,
+                    cmax=_zmax,
+                    size=marker_size,
+                    colorbar=colorbar_cfg,
+                ),
+                hovertemplate=hover,
+                showlegend=False,
+            )
+
+        # Static single-layer figure
+        if len(layer_list) == 1:
+            fig = go.Figure(_trace(layer_list[0]))
+            fig.update_layout(
+                title=title or f"Layer {layer_list[0]} — {column}",
+                xaxis_title="Demand X (mm)",
+                yaxis_title="Demand Y (mm)",
+                yaxis=dict(scaleanchor="x", scaleratio=1),
+            )
+            return fig
+
+        # Multi-layer figure with slider + Play/Pause
+        frames = [go.Frame(data=[_trace(l)], name=str(l)) for l in layer_list]
+        slider_steps = [
+            dict(
+                args=[
+                    [str(l)],
+                    {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"},
+                ],
+                label=str(l),
+                method="animate",
+            )
+            for l in layer_list
+        ]
+
+        fig = go.Figure(data=[_trace(layer_list[0])], frames=frames)
+        fig.update_layout(
+            title=title or f"Layers {layer_list[0]}–{layer_list[-1]} — {column}",
+            xaxis_title="Demand X (mm)",
+            yaxis_title="Demand Y (mm)",
+            yaxis=dict(scaleanchor="x", scaleratio=1),
+            sliders=[
+                dict(
+                    active=0,
+                    steps=slider_steps,
+                    currentvalue=dict(prefix="Layer: ", visible=True),
+                    pad=dict(t=60, b=10),
+                )
+            ],
+            updatemenus=[
+                dict(
+                    type="buttons",
+                    showactive=False,
+                    xanchor="center",
+                    x=0.5,
+                    y=-0.12,
+                    buttons=[
+                        dict(
+                            label="▶  Play",
+                            method="animate",
+                            args=[
+                                None,
+                                {
+                                    "frame": {"duration": 200, "redraw": True},
+                                    "fromcurrent": True,
+                                    "mode": "immediate",
+                                },
+                            ],
+                        ),
+                        dict(
+                            label="⏸  Pause",
+                            method="animate",
+                            args=[
+                                [None],
+                                {
+                                    "frame": {"duration": 0, "redraw": False},
+                                    "mode": "immediate",
+                                },
+                            ],
+                        ),
+                    ],
+                )
+            ],
+        )
+        return fig
+
+    def _plot_line(
+        self,
+        columns: list[str],
+        layer_list: list[int],
+        *,
+        aggregation: str,
+        percentile_band: bool,
+        title: str | None,
+    ) -> "go.Figure":
+        import plotly.express as px
+        import plotly.graph_objects as go
+
+        _AGG = {"mean": np.mean, "median": np.median, "min": np.min, "max": np.max}
+        if aggregation not in _AGG:
+            raise ValueError(
+                f"aggregation must be one of {list(_AGG.keys())}, "
+                f"got '{aggregation}'"
+            )
+        agg_fn = _AGG[aggregation]
+        palette = px.colors.qualitative.Plotly
+
+        fig = go.Figure()
+
+        for i, col in enumerate(columns):
+            c_col = self._col(col)
+            color = palette[i % len(palette)]
+            layer_nums, agg_vals, p10_vals, p90_vals = [], [], [], []
+
+            for layer in layer_list:
+                vals = self.data[layer][:, c_col]
+                layer_nums.append(layer)
+                agg_vals.append(float(agg_fn(vals)))
+                p10_vals.append(float(np.percentile(vals, 10)))
+                p90_vals.append(float(np.percentile(vals, 90)))
+
+            if percentile_band:
+                # Closed polygon: p90 forward then p10 reversed
+                fig.add_trace(
+                    go.Scatter(
+                        x=layer_nums + layer_nums[::-1],
+                        y=p90_vals + p10_vals[::-1],
+                        fill="toself",
+                        fillcolor=color,
+                        opacity=0.15,
+                        line=dict(color="rgba(0,0,0,0)"),
+                        showlegend=False,
+                        hoverinfo="skip",
+                    )
+                )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=layer_nums,
+                    y=agg_vals,
+                    mode="lines",
+                    name=col,
+                    line=dict(color=color, width=1.5),
+                    hovertemplate=(
+                        f"<b>{col}</b><br>"
+                        f"Layer: %{{x}}<br>"
+                        f"{aggregation}: %{{y:.4f}}<extra></extra>"
+                    ),
+                )
+            )
+
+        fig.update_layout(
+            title=title or f"{aggregation.capitalize()} signal vs layer",
+            xaxis_title="Layer",
+            yaxis_title="Signal value",
+            hovermode="x unified",
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="right",
+                x=1,
+            ),
+        )
+        return fig
+
+    def _plot_volume(
+        self,
+        column: str,
+        layer_list: list[int],
+        *,
+        layer_thickness: float,
+        max_points: int,
+        colorscale: str,
+        marker_size: int,
+        zmin: float | None,
+        zmax: float | None,
+        title: str | None,
+    ) -> "go.Figure":
+        import plotly.graph_objects as go
+
+        x_col = self._col("Demand X")
+        y_col = self._col("Demand Y")
+        c_col = self._col(column)
+
+        total_points = sum(len(self.data[l]) for l in layer_list)
+        keep_frac = min(1.0, max_points / total_points) if total_points > 0 else 1.0
+        if keep_frac < 1.0:
+            logger.info(
+                f"volume: downsampling {total_points:,} → ≤{max_points:,} points "
+                f"({keep_frac:.1%} per layer)"
+            )
+
+        xs, ys, zs, cs = [], [], [], []
+        rng = np.random.default_rng(seed=0)  # reproducible downsampling
+        for layer in layer_list:
+            arr = self.data[layer]
+            if keep_frac < 1.0:
+                n = max(1, int(len(arr) * keep_frac))
+                idx = rng.choice(len(arr), size=n, replace=False)
+                arr = arr[idx]
+            z_coord = (layer - 0.5) * layer_thickness  # mid-layer Z in mm
+            xs.append(arr[:, x_col])
+            ys.append(arr[:, y_col])
+            zs.append(np.full(len(arr), z_coord, dtype=np.float32))
+            cs.append(arr[:, c_col])
+
+        xs = np.concatenate(xs)
+        ys = np.concatenate(ys)
+        zs = np.concatenate(zs)
+        cs = np.concatenate(cs)
+
+        _zmin = float(np.nanmin(cs)) if zmin is None else zmin
+        _zmax = float(np.nanmax(cs)) if zmax is None else zmax
+
+        fig = go.Figure(
+            go.Scatter3d(
+                x=xs,
+                y=ys,
+                z=zs,
+                mode="markers",
+                marker=dict(
+                    color=cs,
+                    colorscale=colorscale,
+                    cmin=_zmin,
+                    cmax=_zmax,
+                    size=marker_size,
+                    colorbar=dict(title=dict(text=column, side="right")),
+                    opacity=0.6,
+                ),
+                hovertemplate=(
+                    "X: %{x:.2f} mm<br>"
+                    "Y: %{y:.2f} mm<br>"
+                    "Z: %{z:.3f} mm<br>"
+                    + column
+                    + ": %{marker.color:.4f}<extra></extra>"
+                ),
+            )
+        )
+        fig.update_layout(
+            title=title or f"3D volume — {column}",
+            scene=dict(
+                xaxis_title="Demand X (mm)",
+                yaxis_title="Demand Y (mm)",
+                zaxis_title="Z (mm)",
+                aspectmode="data",
+            ),
+        )
+        return fig
+
 
 def _run_tests(ampm_dir: str, start_layer: int, end_layer: int) -> None:
     """
@@ -902,15 +1374,43 @@ def _run_tests(ampm_dir: str, start_layer: int, end_layer: int) -> None:
 
 
 if __name__ == "__main__":
-    ampm_dir = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_AMPM/[3] Export Packets"
-    fullplate_stl = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_ElDesF_CranialRepeat_20260127/STL/fullplate/JR306_FULLPLATE_STL.stl"
     save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_masked_corrected.h5"
-    parts_csv = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_parts.csv"
 
-    data = AMPMData.from_directory(ampm_dir, 165, 265)
-    data.mask(fullplate_stl)
-    data.correct_meltpool()
-    data.save(save_path)
+    data = AMPMData.load(save_path)
 
-    # data = AMPMData.load(save_path)
-    # data.import_parts(parts_csv, parametric=True)
+    # ── Heatmap: single layer ──────────────────────────────────────────────────
+    # Colour by meltpool signal for one layer.
+    fig = data.plot("heatmap", "MeltVIEW melt pool (mean)", layers=200)
+    fig.show()
+
+    # ── Heatmap: laser path (Start time as colour) ─────────────────────────────
+    # Reveals scan strategy — earlier-fired points are darker.
+    fig = data.plot("heatmap", "Start time", layers=200)
+    fig.show()
+
+    # ── Heatmap: slider across a layer range ───────────────────────────────────
+    # Stepping through 10 layers; clamp colour range to ignore outliers.
+    fig = data.plot(
+        "heatmap",
+        "LaserVIEW (mean)",
+        layers=list(range(200, 210)),
+        zmin=0,
+        zmax=5000,
+    )
+    fig.show()
+
+    # ── Line: single signal vs layer ───────────────────────────────────────────
+    fig = data.plot("line", "MeltVIEW melt pool (mean)")
+    fig.show()
+
+    # ── Line: multiple signals overlaid ───────────────────────────────────────
+    fig = data.plot(
+        "line",
+        ["LaserVIEW (mean)", "MeltVIEW melt pool (mean)", "MeltVIEW plasma (mean)"],
+        aggregation="median",
+    )
+    fig.show()
+
+    # ── Volume: 3D view coloured by LaserVIEW ─────────────────────────────────
+    fig = data.plot("volume", "LaserVIEW (mean)")
+    fig.show()
