@@ -37,18 +37,18 @@ class AMPMData:
     MeltVIEW melt pool (mean), LaserVIEW (mean)].
 
     Use the factory method AMPMData.from_directory() to load data, then call
-    mask() and correct() in-place to process it.
+    mask() and correct_meltpool() in-place to process it.
 
     Note
     ----
-    correct() is only applicable to data from the main Renishaw 500S machine.
+    correct_meltpool() is only applicable to data from the main Renishaw 500S machine.
     Do not use it on RBV machine data.
 
     Examples
     --------
     >>> data = AMPMData.from_directory("path/to/ampm/export/packets", 1, 100)
     >>> data.mask("path/to/fullplate.stl")
-    >>> data.correct()  # main machine only
+    >>> data.correct_meltpool()  # main machine only
     >>> print(len(data))
 
     Load only coordinates and LaserVIEW:
@@ -96,7 +96,7 @@ class AMPMData:
         "MeltVIEW melt pool (mean)",
     ]
 
-    # Main 500S LaserVIEW XY correction regression model (reg_XYLv)
+    # Main 500S LaserVIEW XY meltpool (mean) correction regression model (reg_XYLv)
     _POWER_MATRIX = np.array(
         [
             [0, 0, 1],
@@ -255,90 +255,6 @@ class AMPMData:
     def keys(self):
         return self.data.keys()
 
-    def import_parts(
-        self,
-        filepath: Path | str,
-        parametric: bool = False,
-    ) -> None:
-        """
-        Import part metadata from a QuantAM exported parts CSV and store as self.parts.
-
-        Parameters
-        ----------
-        filepath : Path | str
-            Path to the QuantAM exported parts CSV file.
-        parametric : bool, optional
-            Include Hatch Power, Hatch Point Distance, Hatch Exposure Time (default: False).
-        """
-        filepath = Path(filepath) if isinstance(filepath, str) else filepath
-        if not filepath.exists():
-            raise FileNotFoundError(f"File not found: {filepath}")
-
-        parts_data = pd.read_csv(
-            filepath,
-            usecols=[1, 3, 4, 5, 6],
-            names=[
-                "Part ID",
-                "Layer Thickness",
-                "X Position",
-                "Y Position",
-                "Layers Count",
-            ],
-            skiprows=6,
-            on_bad_lines="skip",
-            skip_blank_lines=True,
-        )
-
-        parametric_possible = "Tab - 10" in parts_data["Part ID"].values
-
-        parts_idx = []
-        for value in parts_data["Part ID"]:
-            if pd.isna(value):
-                break
-            if isinstance(value, str) and value.startswith("Tab - "):
-                break
-            parts_idx.append(int(value) - 1)
-        parts_data = parts_data.loc[parts_idx]
-
-        if parametric and not parametric_possible:
-            raise ValueError(f"No parametric data found in file: {filepath}")
-
-        if parametric and parametric_possible:
-            skipped_rows = len(parts_idx) + 10
-            first_col = pd.read_csv(
-                filepath,
-                usecols=[1],
-                names=["Part ID"],
-                skiprows=skipped_rows,
-                on_bad_lines="skip",
-                skip_blank_lines=True,
-            )
-            full_parts_list = []
-            for value in first_col["Part ID"]:
-                if pd.isna(value):
-                    break
-                if isinstance(value, str) and value.startswith("Tab - "):
-                    break
-                if isinstance(value, str):
-                    base_value = value.replace(".1", "").replace(".s", "")
-                    if base_value in parts_data["Part ID"].values:
-                        full_parts_list.append(value)
-            if "Tab - 10" and "Tab - 11" in first_col["Part ID"].values:
-                skipped_rows = 9 * (len(full_parts_list) + 4) + (len(parts_idx) + 10)
-            parts_params = pd.read_csv(
-                filepath,
-                usecols=[7, 9, 10],
-                names=["Hatch Power", "Hatch Point Distance", "Hatch Exposure Time"],
-                skiprows=skipped_rows,
-                nrows=len(parts_idx),
-                on_bad_lines="skip",
-                skip_blank_lines=True,
-            )
-            parts_data = pd.concat([parts_data, parts_params], axis=1)
-
-        self.parts = parts_data
-        logger.info(f"Imported {len(parts_data)} parts from {filepath.name}")
-
     @classmethod
     def from_directory(
         cls,
@@ -495,7 +411,7 @@ class AMPMData:
         missing = expected - set(data.keys())
         if missing:
             logger.warning(f"Missing layers after import: {sorted(missing)}")
-        logger.info(f"\nSUCCESSFULLY IMPORTED {len(data)} LAYERS\n")
+        logger.info(f"SUCCESSFULLY IMPORTED {len(data)} LAYERS\n")
 
         return cls(data, USECOLS)
 
@@ -562,11 +478,11 @@ class AMPMData:
             else:
                 logger.info(msg)
                 self.data[j] = masked
-        logger.info(f"\nSUCCESSFULLY MASKED {len(self.data)} LAYERS\n")
+        logger.info(f"SUCCESSFULLY MASKED {len(self.data)} LAYERS\n")
 
-    def correct(self) -> None:
+    def correct_meltpool(self) -> None:
         """
-        Apply LaserVIEW-based XY positional correction to MeltPool signal in-place.
+        Apply LaserVIEW-based XY positional correction to meltpool (mean) signal in-place.
 
         This correction is only applicable to data collected on the main Renishaw
         500S machine. Do NOT apply this correction to data from the RBV (Reduced
@@ -582,7 +498,7 @@ class AMPMData:
         missing = [c for c in self._CORRECT_COLUMNS if c not in self.columns]
         if missing:
             raise ValueError(
-                f"correct() requires the following columns which were not loaded: "
+                f"correct_meltpool() requires the following columns which were not loaded: "
                 f"{missing}. Re-import with these columns included."
             )
 
@@ -622,7 +538,7 @@ class AMPMData:
 
             logger.info(f"  Layer {j}: correction applied to {len(data)} points")
 
-        logger.info(f"\nSUCCESSFULLY CORRECTED {len(self.data)} LAYERS\n")
+        logger.info(f"SUCCESSFULLY CORRECTED {len(self.data)} LAYERS\n")
 
     def save(self, path: Path | str) -> None:
         """
@@ -675,8 +591,7 @@ class AMPMData:
             else:
                 logger.warning(
                     "No 'columns' attribute found in HDF5 file — assuming legacy "
-                    "column order [Start time, Duration, Demand X, Demand Y, "
-                    "MeltVIEW plasma (mean), MeltVIEW melt pool (mean), LaserVIEW (mean)]. "
+                    "[Start time, Duration, Demand X, Demand Y, MeltVIEW plasma (mean), MeltVIEW melt pool (mean), LaserVIEW (mean)]. "
                     "Re-save with the current version to suppress this warning."
                 )
                 columns = [
@@ -693,6 +608,90 @@ class AMPMData:
         logger.info(f"Loaded {len(data)} layers from {path.name}")
         return cls(data, columns)
 
+    def import_parts(
+        self,
+        filepath: Path | str,
+        parametric: bool = False,
+    ) -> None:
+        """
+        Import part metadata from a QuantAM exported parts CSV and store as self.parts.
+
+        Parameters
+        ----------
+        filepath : Path | str
+            Path to the QuantAM exported parts CSV file.
+        parametric : bool, optional
+            Include Hatch Power, Hatch Point Distance, Hatch Exposure Time (default: False).
+        """
+        filepath = Path(filepath) if isinstance(filepath, str) else filepath
+        if not filepath.exists():
+            raise FileNotFoundError(f"File not found: {filepath}")
+
+        parts_data = pd.read_csv(
+            filepath,
+            usecols=[1, 3, 4, 5, 6],
+            names=[
+                "Part ID",
+                "Layer Thickness",
+                "X Position",
+                "Y Position",
+                "Layers Count",
+            ],
+            skiprows=6,
+            on_bad_lines="skip",
+            skip_blank_lines=True,
+        )
+
+        parametric_possible = "Tab - 10" in parts_data["Part ID"].values
+
+        parts_idx = []
+        for value in parts_data["Part ID"]:
+            if pd.isna(value):
+                break
+            if isinstance(value, str) and value.startswith("Tab - "):
+                break
+            parts_idx.append(int(value) - 1)
+        parts_data = parts_data.loc[parts_idx]
+
+        if parametric and not parametric_possible:
+            raise ValueError(f"No parametric data found in file: {filepath}")
+
+        if parametric and parametric_possible:
+            skipped_rows = len(parts_idx) + 10
+            first_col = pd.read_csv(
+                filepath,
+                usecols=[1],
+                names=["Part ID"],
+                skiprows=skipped_rows,
+                on_bad_lines="skip",
+                skip_blank_lines=True,
+            )
+            full_parts_list = []
+            for value in first_col["Part ID"]:
+                if pd.isna(value):
+                    break
+                if isinstance(value, str) and value.startswith("Tab - "):
+                    break
+                if isinstance(value, str):
+                    base_value = value.replace(".1", "").replace(".s", "")
+                    if base_value in parts_data["Part ID"].values:
+                        full_parts_list.append(value)
+            if "Tab - 10" and "Tab - 11" in first_col["Part ID"].values:
+                skipped_rows = 9 * (len(full_parts_list) + 4) + (len(parts_idx) + 10)
+            parts_params = pd.read_csv(
+                filepath,
+                usecols=[7, 9, 10],
+                names=["Hatch Power", "Hatch Point Distance", "Hatch Exposure Time"],
+                skiprows=skipped_rows,
+                nrows=len(parts_idx),
+                on_bad_lines="skip",
+                skip_blank_lines=True,
+            )
+            parts_data = pd.concat([parts_data, parts_params], axis=1)
+
+        self.parts = parts_data
+        logger.info(f"Imported {len(parts_data)} parts from {filepath.name}")
+
 
 def _run_tests(ampm_dir: str, start_layer: int, end_layer: int) -> None:
     """
@@ -700,7 +699,7 @@ def _run_tests(ampm_dir: str, start_layer: int, end_layer: int) -> None:
 
     Runs six import scenarios and validates that each produces an AMPMData object
     with the expected columns and correct array shape. Also validates that
-    error-path cases (unknown column names, correct() on missing columns) raise
+    error-path cases (unknown column names, correct_meltpool() on missing columns) raise
     the expected exceptions.
 
     Parameters
@@ -850,14 +849,14 @@ def _run_tests(ampm_dir: str, start_layer: int, end_layer: int) -> None:
         all_passed = False
 
     logger.info(
-        "\nTest 6: correct() raises ValueError when required columns not loaded"
+        "\nTest 6: correct_meltpool() raises ValueError when required columns not loaded"
     )
     try:
         data = AMPMData.from_directory(ampm_dir, start_layer, end_layer, columns=[])
         raised = False
         msg = ""
         try:
-            data.correct()
+            data.correct_meltpool()
         except ValueError as exc:
             raised = True
             msg = str(exc)
@@ -908,12 +907,10 @@ if __name__ == "__main__":
     save_path = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_Fares_plate/JR306_masked_corrected.h5"
     parts_csv = "C:/Users/ohp460/Documents/Code/ampm-data/JR306_parts.csv"
 
-    # data = AMPMData.from_directory(ampm_dir, 165, 265)
-    # data.mask(fullplate_stl)
-    # data.correct()
-    # data.save(save_path)
+    data = AMPMData.from_directory(ampm_dir, 165, 265)
+    data.mask(fullplate_stl)
+    data.correct_meltpool()
+    data.save(save_path)
 
-    data = AMPMData.load(save_path)
-    data.import_parts(parts_csv, parametric=True)
-
-    print(data.parts)
+    # data = AMPMData.load(save_path)
+    # data.import_parts(parts_csv, parametric=True)
