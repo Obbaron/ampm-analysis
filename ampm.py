@@ -711,7 +711,7 @@ class AMPMData:
         title: str | None = None,
     ) -> "go.Figure":
         """
-        Visualise AMPM data using Plotly.
+        Visualize AMPM data using Plotly.
 
         Parameters
         ----------
@@ -735,7 +735,7 @@ class AMPMData:
                 Automatically downsampled to *volume_max_points* if needed.
 
         column : str | list[str]
-            Column name(s) to visualise. Any loaded column is valid, including
+            Column name(s) to visualize. Any loaded column is valid, including
             ``"Start time"`` (laser path order), ``"Duration"``,
             ``"Demand X"``, ``"Demand Y"``, signal means/medians, etc.
             A list is only meaningful for ``kind="line"``; for ``"heatmap"``
@@ -786,8 +786,8 @@ class AMPMData:
         Raises
         ------
         ValueError
-            If *kind* is unrecognised, any *column* is not loaded, *aggregation*
-            is unrecognised, or any requested layer is absent from the data.
+            If *kind* is unrecognized, any *column* is not loaded, *aggregation*
+            is unrecognized, or any requested layer is absent from the data.
 
         Examples
         --------
@@ -820,7 +820,6 @@ class AMPMData:
         if kind not in _KINDS:
             raise ValueError(f"kind must be one of {_KINDS}, got '{kind}'")
 
-        # Normalise column to a list
         columns = [column] if isinstance(column, str) else list(column)
 
         bad_cols = [c for c in columns if c not in self.columns]
