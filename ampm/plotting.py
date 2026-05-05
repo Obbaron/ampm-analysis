@@ -24,7 +24,6 @@ from typing import Literal, Sequence
 import numpy as np
 import plotly.graph_objects as go
 import polars as pl
-
 from scipy.stats import gaussian_kde
 
 
@@ -202,7 +201,7 @@ def scatter3d(
             xaxis_title=xaxis_title if xaxis_title is not None else x,
             yaxis_title=yaxis_title if yaxis_title is not None else y,
             zaxis_title=zaxis_title if zaxis_title is not None else z,
-            aspectmode="data",  # equal scale on all axes; respects real geometry
+            aspectmode="data",
         ),
         margin=dict(l=0, r=0, t=40 if title else 0, b=0),
     )
@@ -451,6 +450,7 @@ def contour(
     plotly.graph_objects.Figure
     """
     _check_columns(df, [x, y, z])
+
     grid = df.pivot(
         on=x,
         index=y,
@@ -820,6 +820,7 @@ def kde(
     groups: Sequence[str] | None = None,
     bandwidth: float | str | None = None,
     n_eval_points: int = 200,
+    max_points_per_group: int | None = 80_000,
     drop_noise: bool = True,
     noise_label: str | None = "noise",
     range_clip: tuple[float, float] | None = None,
@@ -829,6 +830,8 @@ def kde(
     title: str | None = None,
     xaxis_title: str | None = None,
     yaxis_title: str | None = None,
+    seed: int = 0,
+    verbose: bool = True,
 ) -> go.Figure:
     """
     Overlaid kernel-density estimate (KDE) curves, one per group.
@@ -837,6 +840,15 @@ def kde(
     scipy.stats.gaussian_kde, evaluates each on a shared x-grid covering
     the data range, and plots all curves as filled (or unfilled) lines.
     Each curve gets its own color from ``colorscale``.
+
+    Memory safety
+    -------------
+    With AMPM-scale data (millions of points per group), running KDE on the
+    full data is unnecessary and pushes memory hard. By default, groups
+    larger than ``max_points_per_group`` are randomly sampled before the
+    KDE is fit — the resulting curve is visually indistinguishable from the
+    full-data version since KDE is a smoothed estimate. Set
+    ``max_points_per_group=None`` to opt out and use every row.
 
     Parameters
     ----------
@@ -859,6 +871,10 @@ def kde(
     n_eval_points
         How many x-values to evaluate each KDE at. Default 200 — fine for
         publication-quality curves; raise if you see visible kinks.
+    max_points_per_group
+        Cap on rows used per group for the KDE fit. Default 80_000. Larger
+        groups are randomly sampled down. Set to None to use every row
+        (slower and memory-heavy on large data, but exact).
     drop_noise, noise_label
         Same semantics as ``compute_cov``: drop rows whose group_by value
         equals ``noise_label`` (default ``"noise"``). Set drop_noise=False
@@ -872,12 +888,17 @@ def kde(
         controls fill transparency so overlapping curves remain visible.
     colorscale
         Sequential colorscale name; each group is sampled along it.
+    seed
+        RNG seed for the per-group downsample. Default 0.
+    verbose
+        If True (default), print a one-line message when a group is
+        sampled below its full size, so the caller knows the curve was
+        fit on a subset.
 
     Returns
     -------
     plotly.graph_objects.Figure
     """
-
     _check_columns(df, [column, group_by])
 
     work = df
@@ -930,12 +951,24 @@ def kde(
     else:
         sampled_colors = [_sample_colorscale(colorscale, i / (n - 1)) for i in range(n)]
 
+    rng = np.random.default_rng(seed)
     traces = []
     for grp, color in zip(groups, sampled_colors):
         sub = work.filter(pl.col(group_by) == grp)[column].drop_nulls().to_numpy()
         if sub.size < 2:
             print(f"[kde] Skipping {grp}: only {sub.size} data point(s).")
             continue
+
+        if max_points_per_group is not None and sub.size > max_points_per_group:
+            idx = rng.choice(sub.size, size=max_points_per_group, replace=False)
+            full_size = sub.size
+            sub = sub[idx]
+            if verbose:
+                print(
+                    f"[kde] {grp}: sampled "
+                    f"{max_points_per_group:,}/{full_size:,} points"
+                )
+
         try:
             kde_obj = gaussian_kde(sub, bw_method=bandwidth)
         except (np.linalg.LinAlgError, ValueError) as e:
