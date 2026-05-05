@@ -208,7 +208,8 @@ __marimo__/
 
 # Project data directories
 JR306_Fares_plate/
-AMPM_Files/
+AMPM_data/
+tests/
 mtt.py
 y.py
 z.py
