@@ -25,6 +25,8 @@ import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 
+from scipy.stats import gaussian_kde
+
 
 def _check_columns(df: pl.DataFrame, cols: Sequence[str]) -> None:
     missing = [c for c in cols if c not in df.columns]
@@ -200,7 +202,7 @@ def scatter3d(
             xaxis_title=xaxis_title if xaxis_title is not None else x,
             yaxis_title=yaxis_title if yaxis_title is not None else y,
             zaxis_title=zaxis_title if zaxis_title is not None else z,
-            aspectmode="data",  # respects real geometry
+            aspectmode="data",  # equal scale on all axes; respects real geometry
         ),
         margin=dict(l=0, r=0, t=40 if title else 0, b=0),
     )
@@ -808,3 +810,187 @@ def _build_layered_hover_template(
         for j, hc in enumerate(hover_columns):
             parts.append(f"{hc}: %{{customdata[{j+1}]}}")
     return "<br>".join(parts) + "<extra></extra>"
+
+
+def kde(
+    df: pl.DataFrame,
+    column: str,
+    *,
+    group_by: str = "part_id",
+    groups: Sequence[str] | None = None,
+    bandwidth: float | str | None = None,
+    n_eval_points: int = 200,
+    drop_noise: bool = True,
+    noise_label: str | None = "noise",
+    range_clip: tuple[float, float] | None = None,
+    fill: bool = True,
+    opacity: float = 0.5,
+    colorscale: str = "Turbo",
+    title: str | None = None,
+    xaxis_title: str | None = None,
+    yaxis_title: str | None = None,
+) -> go.Figure:
+    """
+    Overlaid kernel-density estimate (KDE) curves, one per group.
+
+    Computes the KDE for each group's values of ``column`` using
+    scipy.stats.gaussian_kde, evaluates each on a shared x-grid covering
+    the data range, and plots all curves as filled (or unfilled) lines.
+    Each curve gets its own color from ``colorscale``.
+
+    Parameters
+    ----------
+    df
+        DataFrame with at least ``column`` and ``group_by``.
+    column
+        Numeric column whose distribution to plot.
+    group_by
+        Column whose values define the curves. Default ``"part_id"``.
+    groups
+        Optional list of specific group values to plot. When None, all
+        groups are plotted. With more than 12 groups a readability
+        warning is printed.
+    bandwidth
+        Forwarded to scipy.stats.gaussian_kde's ``bw_method``. None uses
+        Scott's rule (a sensible default). Float specifies bandwidth as
+        a fraction of the sample's std. ``"silverman"`` uses Silverman's
+        rule. Adjust if curves look too wiggly (decrease) or too smooth
+        (increase) for your data.
+    n_eval_points
+        How many x-values to evaluate each KDE at. Default 200 — fine for
+        publication-quality curves; raise if you see visible kinks.
+    drop_noise, noise_label
+        Same semantics as ``compute_cov``: drop rows whose group_by value
+        equals ``noise_label`` (default ``"noise"``). Set drop_noise=False
+        to keep all groups.
+    range_clip
+        Optional (lo, hi) clip on the x-grid. KDE extrapolates beyond
+        the observed range; this clips the curve so it doesn't show
+        density at physically impossible values.
+    fill, opacity
+        Fill under each curve (True) or line-only (False). ``opacity``
+        controls fill transparency so overlapping curves remain visible.
+    colorscale
+        Sequential colorscale name; each group is sampled along it.
+
+    Returns
+    -------
+    plotly.graph_objects.Figure
+    """
+
+    _check_columns(df, [column, group_by])
+
+    work = df
+    if drop_noise:
+        if noise_label is None:
+            work = work.filter(pl.col(group_by).is_not_null())
+        else:
+            work = work.filter(pl.col(group_by) != noise_label)
+
+    if groups is not None:
+        groups = list(groups)
+        work = work.filter(pl.col(group_by).is_in(groups))
+
+    if work.is_empty():
+        raise ValueError(
+            "No rows remaining after filtering — check group_by values, "
+            "groups list, and noise_label."
+        )
+
+    if groups is None:
+        groups = sorted(work[group_by].unique().drop_nulls().to_list())
+
+    if len(groups) > 12:
+        print(
+            f"[kde] Warning: {len(groups)} groups will be plotted — overlay "
+            f"may be hard to read. Consider passing groups=[...] to filter."
+        )
+
+    col_vals = work[column].drop_nulls().to_numpy()
+    if col_vals.size < 2:
+        raise ValueError(f"Not enough data in column {column!r} to estimate KDE.")
+    x_lo = float(col_vals.min())
+    x_hi = float(col_vals.max())
+    if range_clip is not None:
+        x_lo = max(x_lo, range_clip[0])
+        x_hi = min(x_hi, range_clip[1])
+    if x_hi <= x_lo:
+        raise ValueError(
+            f"Empty x-range for KDE: lo={x_lo}, hi={x_hi}. "
+            f"Check range_clip or data."
+        )
+    pad = 0.05 * (x_hi - x_lo)
+    x_grid = np.linspace(x_lo - pad, x_hi + pad, n_eval_points)
+    if range_clip is not None:
+        x_grid = x_grid[(x_grid >= range_clip[0]) & (x_grid <= range_clip[1])]
+
+    n = len(groups)
+    if n == 1:
+        sampled_colors = [_sample_colorscale(colorscale, 0.5)]
+    else:
+        sampled_colors = [_sample_colorscale(colorscale, i / (n - 1)) for i in range(n)]
+
+    traces = []
+    for grp, color in zip(groups, sampled_colors):
+        sub = work.filter(pl.col(group_by) == grp)[column].drop_nulls().to_numpy()
+        if sub.size < 2:
+            print(f"[kde] Skipping {grp}: only {sub.size} data point(s).")
+            continue
+        try:
+            kde_obj = gaussian_kde(sub, bw_method=bandwidth)
+        except (np.linalg.LinAlgError, ValueError) as e:
+            print(f"[kde] Skipping {grp}: KDE failed ({e}).")
+            continue
+        density = kde_obj(x_grid)
+
+        line = dict(color=color, width=2)
+        trace_kwargs: dict = dict(
+            x=x_grid,
+            y=density,
+            mode="lines",
+            name=str(grp),
+            line=line,
+            hovertemplate=(
+                f"{column}: %{{x}}<br>"
+                f"density: %{{y:.4g}}<br>"
+                f"{group_by}: {grp}<extra></extra>"
+            ),
+        )
+        if fill:
+            trace_kwargs["fill"] = "tozeroy"
+            trace_kwargs["fillcolor"] = _with_opacity(color, opacity)
+        traces.append(go.Scatter(**trace_kwargs))
+
+    if not traces:
+        raise ValueError("No KDE curves could be computed — every group was skipped.")
+
+    fig = go.Figure(data=traces)
+    fig.update_layout(
+        title=title,
+        xaxis_title=xaxis_title if xaxis_title is not None else column,
+        yaxis_title=yaxis_title if yaxis_title is not None else "Density",
+        legend=dict(title=group_by),
+        margin=dict(l=60, r=40, t=40 if title else 20, b=60),
+    )
+    return fig
+
+
+def _sample_colorscale(name: str, t: float) -> str:
+    """Sample a Plotly named colorscale at parameter t in [0, 1].
+    Returns 'rgb(r, g, b)' string."""
+    from plotly.colors import sample_colorscale
+
+    sampled = sample_colorscale(name, [float(np.clip(t, 0.0, 1.0))])
+    return sampled[0]
+
+
+def _with_opacity(rgb_str: str, opacity: float) -> str:
+    """Convert an 'rgb(r,g,b)' string to 'rgba(r,g,b,opacity)'."""
+    if rgb_str.startswith("rgb(") and rgb_str.endswith(")"):
+        inner = rgb_str[4:-1]
+        return f"rgba({inner},{opacity})"
+    if rgb_str.startswith("rgba(") and rgb_str.endswith(")"):
+        parts = rgb_str[5:-1].split(",")
+        if len(parts) == 4:
+            return f"rgba({parts[0].strip()},{parts[1].strip()},{parts[2].strip()},{opacity})"
+    return rgb_str

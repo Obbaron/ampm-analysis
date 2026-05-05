@@ -11,7 +11,7 @@ import polars as pl
 
 from ampm import DataStore
 from ampm.sampling import prepare_for_plot
-from ampm.plotting import scatter3d, scatter2d, scatter2d_layered, bar, contour
+from ampm.plotting import scatter3d, scatter2d, scatter2d_layered, bar, contour, kde
 from ampm.masking import build_mask, apply_mask
 from ampm.mask_cache import mask_or_load
 from ampm.clustering import cluster_dbscan_chunked, cluster_summary
@@ -219,6 +219,32 @@ def main() -> None:
         hover_columns=["part_id"],
     )
     fig_process_map.show()
+
+    print("\nCreating melt-pool distribution plot...")
+    fig_dist_all = kde(
+        clustered,
+        column=COV_PLOT_SIGNAL,
+        group_by="part_id",
+        title=f"{COV_PLOT_SIGNAL} distribution per part (all 20 parts)",
+        xaxis_title=COV_PLOT_SIGNAL,
+        colorscale="Turbo",
+    )
+    fig_dist_all.show()
+
+    ranked = cov_overall.sort(f"cov_{COV_PLOT_SIGNAL}")
+    worst_3 = ranked.tail(3)["part_id"].to_list()
+    best_3 = ranked.head(3)["part_id"].to_list()
+
+    fig_dist_extremes = kde(
+        clustered,
+        column=COV_PLOT_SIGNAL,
+        group_by="part_id",
+        groups=best_3 + worst_3,
+        title=f"{COV_PLOT_SIGNAL} distribution: 3 most stable vs 3 least stable parts",
+        xaxis_title=COV_PLOT_SIGNAL,
+        colorscale="Turbo",
+    )
+    fig_dist_extremes.show()
 
     print("Done.")
 
