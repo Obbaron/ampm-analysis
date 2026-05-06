@@ -35,7 +35,7 @@ Built once per (STL, layers, buffer_mm) combination. Two pieces:
 
 **`fullplate_mask.pkl`** — the per-layer 2D shapely MultiPolygons. Cache key is SHA256 of the STL contents (not mtime), so editing the STL in place invalidates correctly. ~1-10 MB depending on geometry complexity.
 
-**`mask_keep.pq`** — the surviving `(layer, Start time)` keys after applying the polygon mask to source data. About 250 MB for the JR299 build (vs ~6 GB for the full filtered DataFrame).
+**`mask_keep.pq`** — the surviving `(layer, Start time)` keys after applying the polygon mask to source data. About 250 MB JR299 vs ~6 GB for the full filtered DataFrame.
 
 The mask cache is consulted via `mask_or_load`:
 
