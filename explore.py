@@ -40,7 +40,7 @@ MIN_SAMPLES = 10
 LAYERS_PER_CHUNK = 11
 OVERLAP_LAYERS = 2
 
-CORRECT_MELTPOOL = True
+CORRECT_MELTPOOL = False
 
 SIGNALS = [
     "MeltVIEW melt pool (mean)",
@@ -67,7 +67,7 @@ def main() -> None:
         "layer_thickness": LAYER_THICKNESS,
     }
 
-    def do_masking(d: pl.DataFrame) -> pl.DataFrame:
+    def do_masking(d: pl.DataFrame) -> pl.DataFrame:  # wrapper function
         mask = build_mask(
             STL,
             layers=store.layers,
@@ -81,7 +81,7 @@ def main() -> None:
     df_masked = mask_or_load(
         df,
         cache_path=MASK_KEEP_CACHE,
-        mask_fn=do_masking,  # I don't like lambda functions
+        mask_fn=do_masking,
         params=mask_params,
         strict=True,
     )
