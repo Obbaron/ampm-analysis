@@ -24,7 +24,6 @@ from ampm.mask_cache import (
     save_mask_keep,
 )
 
-
 def make_df(n: int = 1000, seed: int = 0) -> pl.DataFrame:
     """Build a DataFrame with unique (layer, Start time) keys."""
     rng = np.random.default_rng(seed)
@@ -42,12 +41,10 @@ def make_df(n: int = 1000, seed: int = 0) -> pl.DataFrame:
         "Z": rng.uniform(0, 6, n).astype(np.float32),
     })
 
-
 def make_masked_df(df: pl.DataFrame, keep_fraction: float = 0.5) -> pl.DataFrame:
     """Drop a deterministic subset of rows so we have a known 'mask survivor' set."""
     n_keep = int(df.height * keep_fraction)
     return df.head(n_keep)
-
 
 def test_round_trip_basic() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
@@ -68,7 +65,6 @@ def test_round_trip_basic() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_params_mismatch_strict_raises() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
     try:
@@ -85,7 +81,6 @@ def test_params_mismatch_strict_raises() -> None:
         print("  params mismatch (strict) raises OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_params_mismatch_lax_falls_through() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
@@ -108,7 +103,6 @@ def test_params_mismatch_lax_falls_through() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_missing_file_raises() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
     try:
@@ -122,7 +116,6 @@ def test_missing_file_raises() -> None:
         print("  missing file raises OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_uniqueness_check_at_save() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
@@ -140,7 +133,6 @@ def test_uniqueness_check_at_save() -> None:
         print("  uniqueness check at save OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_mask_or_load_first_call_computes() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
@@ -160,7 +152,6 @@ def test_mask_or_load_first_call_computes() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_mask_or_load_second_call_loads() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
     try:
@@ -179,7 +170,6 @@ def test_mask_or_load_second_call_loads() -> None:
         print("  mask_or_load second call loads OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_mask_or_load_param_change_recomputes() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
@@ -204,7 +194,6 @@ def test_mask_or_load_param_change_recomputes() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_dtype_tolerant_join() -> None:
     """Different dtypes on the input than what's cached should still join."""
     tmp = Path(tempfile.mkdtemp(prefix="mask_cache_test_"))
@@ -223,7 +212,6 @@ def test_dtype_tolerant_join() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_bracketed_path_round_trip() -> None:
     """Regression for Windows path containing '[' and ']' (glob metacharacters)."""
     parent = Path(tempfile.mkdtemp(prefix="mask_brackets_"))
@@ -240,7 +228,6 @@ def test_bracketed_path_round_trip() -> None:
     finally:
         shutil.rmtree(parent, ignore_errors=True)
 
-
 def main() -> None:
     print("Phase 9 mask-cache tests:")
     test_round_trip_basic()
@@ -254,7 +241,6 @@ def main() -> None:
     test_dtype_tolerant_join()
     test_bracketed_path_round_trip()
     print("\nAll Phase 9 tests passed")
-
 
 if __name__ == "__main__":
     main()

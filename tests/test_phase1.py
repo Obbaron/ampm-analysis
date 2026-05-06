@@ -22,12 +22,10 @@ import tempfile
 import time
 from pathlib import Path
 
-
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ampm import DataStore
 from ampm.datastore import EXPECTED_COLUMNS
-
 
 def make_fake_layer_file(path: Path, n_rows: int, layer: int, seed: int = 0) -> None:
     """Write a tab-separated file with the real column names and a trailing tab."""
@@ -68,14 +66,11 @@ def make_fake_layer_file(path: Path, n_rows: int, layer: int, seed: int = 0) -> 
         lines.append("\t".join(formatted) + "\t\n")  # trailing tab
     path.write_text("".join(lines))
 
-
 def main() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="ampm_test_"))
     print(f"Test directory: {tmp}\n")
     try:
-        # ------------------------------------------------------------------
         # 1. Generate synthetic source files
-        # ------------------------------------------------------------------
         layers_to_make = [1, 2, 3, 100, 526, 999]
         rows_per_layer = 500
         for L in layers_to_make:
@@ -83,18 +78,14 @@ def main() -> None:
             make_fake_layer_file(tmp / fname, rows_per_layer, L)
         print(f"[1] Wrote {len(layers_to_make)} synthetic layer files.\n")
 
-        # ------------------------------------------------------------------
         # 2. Discovery
-        # ------------------------------------------------------------------
         store = DataStore(tmp, layer_thickness=0.03)
         print(f"[2] {store!r}")
         assert store.layers == sorted(layers_to_make), store.layers
         print(f"    Discovered layers: {store.layers}")
         print(f"    Columns: {store.columns}\n")
 
-        # ------------------------------------------------------------------
         # 3. Partial cache build (triggered by first query, only requested layers)
-        # ------------------------------------------------------------------
         print("[3] First query of layers 1-3 → should ONLY build those layers:")
         df = store.query(layers=(1, 3), columns=["Demand X", "Demand Y"])
         print(f"    Got DataFrame shape={df.shape}, cols={df.columns}")
@@ -124,10 +115,8 @@ def main() -> None:
         assert schema["MeltVIEW plasma (mean)"] == pl.Float32
         print("    Dtypes: int16/int32/float32 as expected ✓\n")
 
-        # ------------------------------------------------------------------
         # 3b. Overlapping query — should reuse 1-3, build only 4-not-existing
         #     and the new ones (100), skipping the rest.
-        # ------------------------------------------------------------------
         print("[3b] Overlapping query (layers 1-3 + 100) → builds only 100:")
         df_overlap = store.query(layers=[1, 2, 3, 100])
         cached_layers = sorted(
@@ -137,10 +126,8 @@ def main() -> None:
         assert df_overlap["layer"].unique().sort().to_list() == [1, 2, 3, 100]
         print(f"    Cache now contains {cached_layers} ✓\n")
 
-        # ------------------------------------------------------------------
         # 4. Full build_cache() — should build remaining layers (526, 999),
         #    skip already-cached ones (1, 2, 3, 100).
-        # ------------------------------------------------------------------
         print("[4] build_cache() with no args → builds remaining layers only:")
         store.build_cache()
         cached_layers = sorted(
@@ -149,9 +136,7 @@ def main() -> None:
         assert cached_layers == sorted(layers_to_make), cached_layers
         print(f"    Cache complete: {cached_layers}\n")
 
-        # ------------------------------------------------------------------
         # 5. Cache invalidation by touching a source file
-        # ------------------------------------------------------------------
         print("[5] Touching source for layer 100 (newer mtime → should rebuild only it):")
         time.sleep(1.1)  # ensure mtime resolution clears
         target = tmp / "Packet data for layer 100, laser 4.txt"
@@ -159,9 +144,7 @@ def main() -> None:
         store.build_cache()
         print()
 
-        # ------------------------------------------------------------------
         # 5b. Old cache format (float64 Z) → schema-version check rebuilds it.
-        # ------------------------------------------------------------------
         print("[5b] Old-format cache (float64 Z, int32 layer) → should rebuild:")
         # Overwrite layer 1's cache with a pretend "v1" Parquet file.
         zero_row = {c: [0.0] for c in EXPECTED_COLUMNS}
@@ -185,9 +168,7 @@ def main() -> None:
         assert rebuilt.height == rows_per_layer
         print("    Old format auto-detected and rebuilt ✓\n")
 
-        # ------------------------------------------------------------------
         # 6. Query variations
-        # ------------------------------------------------------------------
         print("[6] Query variations:")
         # All layers, all columns
         df_all = store.query()
@@ -234,18 +215,14 @@ def main() -> None:
         assert set(df_proj.columns) == {"Demand X", "layer", "Z"}
         print()
 
-        # ------------------------------------------------------------------
         # 7. Summary
-        # ------------------------------------------------------------------
         print("[7] Summary:")
         s = store.summary()
         print(s)
         assert s.shape == (len(layers_to_make), 6)  # layer, n_rows, x_min/max, y_min/max
         print()
 
-        # ------------------------------------------------------------------
         # 8. Error paths
-        # ------------------------------------------------------------------
         print("[8] Error handling:")
         try:
             store.query(columns=["Bogus column"])
@@ -260,7 +237,6 @@ def main() -> None:
         print("\nAll tests passed ✓")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 if __name__ == "__main__":
     import polars as pl  # used by Z-check inside main

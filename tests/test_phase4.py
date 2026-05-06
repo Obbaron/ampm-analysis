@@ -23,14 +23,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ampm.masking import build_mask, apply_mask
 
-
 def make_two_block_stl(path: Path) -> None:
     """Two 10x5x3 blocks side-by-side. Block 1 centered (0,0,1.5), Block 2 at (15,0,1.5)."""
     b1 = trimesh.creation.box(extents=[10, 5, 3]); b1.apply_translation([0, 0, 1.5])
     b2 = trimesh.creation.box(extents=[10, 5, 3]); b2.apply_translation([15, 0, 1.5])
     mesh = trimesh.util.concatenate([b1, b2])
     mesh.export(path)
-
 
 def make_synthetic_data(layers: list[int], n_per_layer: int = 1000, seed: int = 0) -> pl.DataFrame:
     """Random points spanning a region wider than either block."""
@@ -45,7 +43,6 @@ def make_synthetic_data(layers: list[int], n_per_layer: int = 1000, seed: int = 
                 "signal": rng.normal(500, 100),
             })
     return pl.DataFrame(rows)
-
 
 def test_build_basic() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_test_"))
@@ -67,7 +64,6 @@ def test_build_basic() -> None:
         print(f"  build_basic: sliced {len(in_mask)} layers from blocks ✓")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_apply_mask_keeps_correct_points() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_test_"))
@@ -92,7 +88,6 @@ def test_apply_mask_keeps_correct_points() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_apply_mask_drops_layers_above_part() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_test_"))
     try:
@@ -114,7 +109,6 @@ def test_apply_mask_drops_layers_above_part() -> None:
         print("  apply_mask drops layers above part ✓")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_buffer_grow_and_shrink() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_test_"))
@@ -155,7 +149,6 @@ def test_buffer_grow_and_shrink() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_cache_roundtrip() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_test_"))
     try:
@@ -177,7 +170,6 @@ def test_cache_roundtrip() -> None:
         print("  cache roundtrip + invalidation ✓")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_apply_mask_at_scale() -> None:
     """Sanity check the vectorized contains is fast enough at AMPM scale."""
@@ -208,7 +200,6 @@ def test_apply_mask_at_scale() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_apply_mask_unknown_column_raises() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="mask_test_"))
     try:
@@ -226,7 +217,6 @@ def test_apply_mask_unknown_column_raises() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def main() -> None:
     print("Phase 4 masking tests:")
     test_build_basic()
@@ -237,7 +227,6 @@ def main() -> None:
     test_apply_mask_at_scale()
     test_apply_mask_unknown_column_raises()
     print("\nAll Phase 4 tests passed")
-
 
 if __name__ == "__main__":
     main()

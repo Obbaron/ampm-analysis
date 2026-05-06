@@ -9,7 +9,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 import numpy as np
 import polars as pl
 import plotly.graph_objects as go
@@ -19,10 +18,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from ampm.stats import compute_cov
 from ampm.plotting import bar
 
-
-# --------------------------------------------------------------------------- #
-# CoV: synthetic data builders
-# --------------------------------------------------------------------------- #
 def _make_two_part_data(seed: int = 0) -> pl.DataFrame:
     """
     Two parts. Part A has stable signal (~500 +/- small jitter).
@@ -48,7 +43,6 @@ def _make_two_part_data(seed: int = 0) -> pl.DataFrame:
         })
     return pl.DataFrame(rows)
 
-
 def test_overall_cov_basic() -> None:
     df = _make_two_part_data()
     cov = compute_cov(df, ["signal"], group_by="part_id", noise_label="noise")
@@ -59,7 +53,6 @@ def test_overall_cov_basic() -> None:
     # B should have a much larger CoV than A (sigma 50 vs 1).
     assert rows["B"]["cov_signal"] > rows["A"]["cov_signal"] * 10
     print("  overall CoV: noisier part has higher CoV OK")
-
 
 def test_overall_cov_mathematical_correctness() -> None:
     """Hand-calculate CoV and verify."""
@@ -74,7 +67,6 @@ def test_overall_cov_mathematical_correctness() -> None:
     assert abs(val - 0.5270) < 0.001, val
     print("  overall CoV: matches hand calc OK")
 
-
 def test_drop_noise_default() -> None:
     df = _make_two_part_data()
     # noise_label="noise" matches what apply_part_id_map writes.
@@ -87,7 +79,6 @@ def test_drop_noise_default() -> None:
                        noise_label="noise", drop_noise=False)
     assert "noise" in set(cov2["part_id"].to_list())
     print("  drop_noise default + override OK")
-
 
 def test_per_layer_mean_mode() -> None:
     """
@@ -128,7 +119,6 @@ def test_per_layer_mean_mode() -> None:
     assert abs(o - a) / a < 0.2, f"overall ({o}) should ~match across_layers ({a})"
     print(f"  three modes: overall={o:.3f}, per_layer={p:.3f}, across={a:.3f} OK")
 
-
 def test_zero_mean_returns_null() -> None:
     """A column with mean=0 shouldn't blow up; it should yield null CoV."""
     df = pl.DataFrame({
@@ -138,7 +128,6 @@ def test_zero_mean_returns_null() -> None:
     cov = compute_cov(df, ["signal"], group_by="part_id", drop_noise=False)
     assert cov["cov_signal"][0] is None
     print("  zero-mean → null CoV OK")
-
 
 def test_multiple_columns_in_one_call() -> None:
     df = pl.DataFrame({
@@ -153,7 +142,6 @@ def test_multiple_columns_in_one_call() -> None:
     assert "cov_signal_2" in cov.columns
     assert cov.height == 2
     print("  multiple columns OK")
-
 
 def test_unknown_column_raises() -> None:
     df = pl.DataFrame({"part_id": ["A"], "signal": [1.0]})
@@ -171,7 +159,6 @@ def test_unknown_column_raises() -> None:
         raise AssertionError("expected KeyError")
     print("  unknown column raises OK")
 
-
 def test_unknown_mode_raises() -> None:
     df = pl.DataFrame({"part_id": ["A"], "signal": [1.0]})
     try:
@@ -182,7 +169,6 @@ def test_unknown_mode_raises() -> None:
     else:
         raise AssertionError("expected ValueError")
     print("  unknown mode raises OK")
-
 
 def test_per_layer_mode_requires_layer_col() -> None:
     df = pl.DataFrame({
@@ -198,7 +184,6 @@ def test_per_layer_mode_requires_layer_col() -> None:
         raise AssertionError("expected KeyError")
     print("  per_layer_mean requires layer_col OK")
 
-
 def test_noise_label_string() -> None:
     """noise_label='noise' should drop only string-labelled noise rows."""
     df = pl.DataFrame({
@@ -211,24 +196,18 @@ def test_noise_label_string() -> None:
     assert cov["part_id"][0] == "A"
     print("  noise_label string drops correctly OK")
 
-
 def test_empty_after_drop_returns_empty() -> None:
     df = pl.DataFrame({"part_id": [None, None], "signal": [1.0, 2.0]})
     cov = compute_cov(df, ["signal"], group_by="part_id")
     assert cov.is_empty()
     print("  all-noise input returns empty OK")
 
-
-# --------------------------------------------------------------------------- #
-# bar() tests
-# --------------------------------------------------------------------------- #
 def _bar_df() -> pl.DataFrame:
     return pl.DataFrame({
         "part_id": ["A", "B", "C", "D"],
         "cov_signal": [0.1, 0.05, 0.3, 0.15],
         "n_rows": [1000, 800, 1200, 950],
     })
-
 
 def test_bar_basic() -> None:
     fig = bar(_bar_df(), x="part_id", y="cov_signal")
@@ -240,7 +219,6 @@ def test_bar_basic() -> None:
     assert list(trace.y) == [0.1, 0.05, 0.3, 0.15]
     print("  bar basic OK")
 
-
 def test_bar_sort_by_y() -> None:
     fig = bar(_bar_df(), x="part_id", y="cov_signal", sort_by="y")
     trace = fig.data[0]
@@ -248,14 +226,12 @@ def test_bar_sort_by_y() -> None:
     assert list(trace.x) == ["B", "A", "D", "C"]
     print("  bar sort_by=y ascending OK")
 
-
 def test_bar_sort_descending() -> None:
     fig = bar(_bar_df(), x="part_id", y="cov_signal",
               sort_by="y", sort_descending=True)
     trace = fig.data[0]
     assert list(trace.x) == ["C", "D", "A", "B"]
     print("  bar sort descending OK")
-
 
 def test_bar_horizontal() -> None:
     fig = bar(_bar_df(), x="part_id", y="cov_signal", orientation="h")
@@ -266,14 +242,12 @@ def test_bar_horizontal() -> None:
     assert list(trace.x) == [0.1, 0.05, 0.3, 0.15]
     print("  bar horizontal OK")
 
-
 def test_bar_with_numeric_color() -> None:
     fig = bar(_bar_df(), x="part_id", y="cov_signal", color="n_rows")
     trace = fig.data[0]
     assert trace.marker.colorscale is not None
     assert list(trace.marker.color) == [1000, 800, 1200, 950]
     print("  bar numeric color OK")
-
 
 def test_bar_with_categorical_color() -> None:
     df = _bar_df().with_columns(
@@ -285,7 +259,6 @@ def test_bar_with_categorical_color() -> None:
     assert all(isinstance(c, int) for c in trace.marker.color)
     assert list(trace.marker.colorbar.ticktext) == ["g1", "g2"]
     print("  bar categorical color OK")
-
 
 def test_bar_label_overrides() -> None:
     fig = bar(
@@ -299,7 +272,6 @@ def test_bar_label_overrides() -> None:
     assert fig.layout.yaxis.title.text == "Coefficient of Variation"
     print("  bar label overrides OK")
 
-
 def test_bar_unknown_column_raises() -> None:
     try:
         bar(_bar_df(), x="bogus", y="cov_signal")
@@ -308,7 +280,6 @@ def test_bar_unknown_column_raises() -> None:
     else:
         raise AssertionError("expected KeyError")
     print("  bar unknown column raises OK")
-
 
 def test_bar_invalid_sort_by() -> None:
     try:
@@ -319,10 +290,6 @@ def test_bar_invalid_sort_by() -> None:
         raise AssertionError("expected ValueError")
     print("  bar invalid sort_by raises OK")
 
-
-# --------------------------------------------------------------------------- #
-# contour() tests
-# --------------------------------------------------------------------------- #
 def _grid_df() -> pl.DataFrame:
     """3x3 grid: speeds 500/1000/1500, powers 100/150/200, cov known."""
     rows = []
@@ -332,7 +299,6 @@ def _grid_df() -> pl.DataFrame:
             cov = 0.1 + (abs(speed - 1000) / 1000) + (abs(power - 150) / 200)
             rows.append({"speed": float(speed), "power": float(power), "cov": cov})
     return pl.DataFrame(rows)
-
 
 def test_contour_basic() -> None:
     from ampm.plotting import contour
@@ -350,7 +316,6 @@ def test_contour_basic() -> None:
     assert list(fig.data[0].y) == [100.0, 150.0, 200.0]
     print("  contour basic (3x3 grid) OK")
 
-
 def test_contour_show_points_false() -> None:
     from ampm.plotting import contour
     df = _grid_df()
@@ -358,7 +323,6 @@ def test_contour_show_points_false() -> None:
     assert len(fig.data) == 1
     assert fig.data[0].type == "contour"
     print("  contour show_points=False OK")
-
 
 def test_contour_irregular_data_has_gaps() -> None:
     """When the grid is incomplete, missing cells become null in the z matrix."""
@@ -377,7 +341,6 @@ def test_contour_irregular_data_has_gaps() -> None:
     assert n_nulls == 2
     print("  contour with gaps OK")
 
-
 def test_contour_label_overrides() -> None:
     from ampm.plotting import contour
     df = _grid_df()
@@ -393,7 +356,6 @@ def test_contour_label_overrides() -> None:
     assert fig.layout.yaxis.title.text == "Hatch Power (W)"
     print("  contour label overrides OK")
 
-
 def test_contour_unknown_column_raises() -> None:
     from ampm.plotting import contour
     df = _grid_df()
@@ -405,10 +367,8 @@ def test_contour_unknown_column_raises() -> None:
         raise AssertionError("expected KeyError")
     print("  contour unknown column raises OK")
 
-
 def main() -> None:
     print("Phase 10 stats + bar tests:")
-    # CoV
     test_overall_cov_basic()
     test_overall_cov_mathematical_correctness()
     test_drop_noise_default()
@@ -420,7 +380,6 @@ def main() -> None:
     test_per_layer_mode_requires_layer_col()
     test_noise_label_string()
     test_empty_after_drop_returns_empty()
-    # bar()
     test_bar_basic()
     test_bar_sort_by_y()
     test_bar_sort_descending()
@@ -436,7 +395,6 @@ def main() -> None:
     test_contour_label_overrides()
     test_contour_unknown_column_raises()
     print("\nAll Phase 10 tests passed")
-
 
 if __name__ == "__main__":
     main()

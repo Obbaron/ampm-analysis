@@ -10,14 +10,12 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 import numpy as np
 import polars as pl
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ampm.correction import MeltPoolCorrection
-
 
 def test_predict_at_origin_matches_expected() -> None:
     """At (X=0, Y=0, L=0), the polynomial should equal the constant term."""
@@ -27,7 +25,6 @@ def test_predict_at_origin_matches_expected() -> None:
     expected = corr.coefficients[6]
     assert abs(pred[0] - expected) < 1e-9
     print(f"  predict at origin (L=0) = {pred[0]:.6f} matches constant OK")
-
 
 def test_predict_at_origin_with_laser_view() -> None:
     """At (X=0, Y=0, L=L), should be constant + c0*L + c9*L^2."""
@@ -41,7 +38,6 @@ def test_predict_at_origin_with_laser_view() -> None:
     )
     assert abs(pred[0] - expected) < 1e-9
     print(f"  predict at origin with L={L} matches hand calc OK")
-
 
 def test_predict_general_position() -> None:
     """Spot-check the full polynomial expansion at a generic point."""
@@ -63,7 +59,6 @@ def test_predict_general_position() -> None:
     )
     assert abs(pred[0] - expected) < 1e-9
     print(f"  predict at (X={X}, Y={Y}, L={L}) matches hand calc OK")
-
 
 def test_apply_basic() -> None:
     """Apply correction to a small DataFrame and check the result."""
@@ -94,7 +89,6 @@ def test_apply_basic() -> None:
     assert (np.abs(diffs) > 0).any(), "Expected at least some non-zero correction"
     print("  apply() basic case OK (origin unchanged, off-origin corrected)")
 
-
 def test_apply_custom_output_column() -> None:
     corr = MeltPoolCorrection()
     df = pl.DataFrame({
@@ -107,7 +101,6 @@ def test_apply_custom_output_column() -> None:
     assert "my_corrected" in out.columns
     assert "MeltVIEW melt pool (mean) corrected" not in out.columns
     print("  apply() custom output column OK")
-
 
 def test_apply_custom_input_columns() -> None:
     corr = MeltPoolCorrection()
@@ -123,7 +116,6 @@ def test_apply_custom_input_columns() -> None:
     )
     assert "mp corrected" in out.columns
     print("  apply() custom input column names OK")
-
 
 def test_apply_missing_column_raises() -> None:
     corr = MeltPoolCorrection()
@@ -141,7 +133,6 @@ def test_apply_missing_column_raises() -> None:
         raise AssertionError("expected KeyError")
     print("  apply() raises on missing column OK")
 
-
 def test_predict_shape_mismatch_raises() -> None:
     corr = MeltPoolCorrection()
     try:
@@ -151,7 +142,6 @@ def test_predict_shape_mismatch_raises() -> None:
     else:
         raise AssertionError("expected ValueError")
     print("  predict() raises on shape mismatch OK")
-
 
 def test_custom_coefficients() -> None:
     """Pass custom power matrix and coefficients."""
@@ -168,7 +158,6 @@ def test_custom_coefficients() -> None:
     # 1 + 2 + 3 + 5 = 11
     assert pred[0] == 11.0
     print("  custom power matrix + coefficients OK")
-
 
 def test_invalid_construction_raises() -> None:
     """Mismatched power_matrix and coefficients shapes."""
@@ -193,7 +182,6 @@ def test_invalid_construction_raises() -> None:
         raise AssertionError("expected ValueError")
     print("  invalid construction raises OK")
 
-
 def test_zero_denominator_yields_nan() -> None:
     """If the polynomial happens to be 0 at a position, the corrected value
     should be NaN, not Inf."""
@@ -217,7 +205,6 @@ def test_zero_denominator_yields_nan() -> None:
     assert abs(vals[1] - 100.0) < 1e-3
     print("  zero denominator yields NaN OK")
 
-
 def test_origin_invariance() -> None:
     """A row at (0, 0) should have corrected ≈ measured exactly."""
     corr = MeltPoolCorrection()
@@ -233,7 +220,6 @@ def test_origin_invariance() -> None:
     # Should be identical at the origin (within float32 precision).
     assert np.allclose(raw, corrected, atol=1e-3)
     print("  origin invariance OK")
-
 
 def test_realistic_data_shape_preserved() -> None:
     """Apply to a moderate-size random DataFrame and verify shape/columns."""
@@ -259,7 +245,6 @@ def test_realistic_data_shape_preserved() -> None:
     assert (np.abs(finite_ratio - 1.0) < 0.2).mean() > 0.95
     print("  realistic-data shape preserved, corrections sensible OK")
 
-
 def main() -> None:
     print("Phase 11 correction tests:")
     test_predict_at_origin_matches_expected()
@@ -276,7 +261,6 @@ def main() -> None:
     test_origin_invariance()
     test_realistic_data_shape_preserved()
     print("\nAll Phase 11 tests passed")
-
 
 if __name__ == "__main__":
     main()

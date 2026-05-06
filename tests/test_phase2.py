@@ -9,7 +9,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 import numpy as np
 import polars as pl
 
@@ -21,7 +20,6 @@ from ampm.sampling import (
     downsample_stride,
     prepare_for_plot,
 )
-
 
 def make_synthetic(n: int = 1_000_000, seed: int = 0) -> pl.DataFrame:
     rng = np.random.default_rng(seed)
@@ -44,7 +42,6 @@ def make_synthetic(n: int = 1_000_000, seed: int = 0) -> pl.DataFrame:
         "signal": signal,
     })
 
-
 def test_random() -> None:
     df = make_synthetic(10_000)
     out = downsample_random(df, 1000, seed=42)
@@ -62,7 +59,6 @@ def test_random() -> None:
         raise AssertionError("expected ValueError")
     print("  random OK")
 
-
 def test_stride() -> None:
     df = make_synthetic(10_000)
     out = downsample_stride(df, 1000)
@@ -70,7 +66,6 @@ def test_stride() -> None:
     assert out["Demand X"][0] == df["Demand X"][0]
     assert out["Demand X"][1] == df["Demand X"][10]
     print("  stride OK")
-
 
 def test_grid_max_preserves_peak() -> None:
     df = make_synthetic(100_000, seed=1)
@@ -81,7 +76,6 @@ def test_grid_max_preserves_peak() -> None:
     assert out["Demand X"].max() <= df["Demand X"].max() + 1e-9
     print(f"  grid+max: {out.height} voxels, peak preserved")
 
-
 def test_grid_mean_smooths_peak() -> None:
     df = make_synthetic(100_000, seed=1)
     out_max = downsample_grid(df, 5_000, method="max")
@@ -89,20 +83,17 @@ def test_grid_mean_smooths_peak() -> None:
     assert out_mean["signal"].max() < out_max["signal"].max()
     print(f"  grid+mean: peak smoothed from {out_max['signal'].max():.0f} to {out_mean['signal'].max():.0f}")
 
-
 def test_grid_median() -> None:
     df = make_synthetic(100_000, seed=1)
     out = downsample_grid(df, 5_000, method="median")
     assert out["signal"].median() < 50, out["signal"].median()
     print("  grid+median OK")
 
-
 def test_grid_explicit_agg_columns() -> None:
     df = make_synthetic(50_000)
     out = downsample_grid(df, 1000, agg_columns=["signal"], method="max")
     assert set(out.columns) == {"Demand X", "Demand Y", "Z", "signal"}
     print("  grid + explicit agg_columns OK")
-
 
 def test_grid_unknown_column_raises() -> None:
     df = make_synthetic(1_000)
@@ -113,7 +104,6 @@ def test_grid_unknown_column_raises() -> None:
     else:
         raise AssertionError("expected KeyError")
     print("  grid + unknown col raises OK")
-
 
 def test_prepare_for_plot_dispatch() -> None:
     df = make_synthetic(20_000)
@@ -130,7 +120,6 @@ def test_prepare_for_plot_dispatch() -> None:
     else:
         raise AssertionError("expected ValueError")
     print("  prepare_for_plot dispatch OK")
-
 
 def test_grid_group_by_basic() -> None:
     """downsample_grid should respect group_by, downsampling each group
@@ -158,7 +147,6 @@ def test_grid_group_by_basic() -> None:
     assert set(result["layer"].unique().to_list()) == {1, 2, 3}
     print("  grid group_by basic OK")
 
-
 def test_grid_group_by_preserves_max() -> None:
     """With method='max', the per-layer maximum should survive."""
     rng = np.random.default_rng(0)
@@ -183,7 +171,6 @@ def test_grid_group_by_preserves_max() -> None:
     assert layer2_max == 8888.0, f"Expected 8888, got {layer2_max}"
     print("  grid group_by preserves max per group OK")
 
-
 def test_grid_group_by_unknown_column_raises() -> None:
     df = make_synthetic(100)
     try:
@@ -193,7 +180,6 @@ def test_grid_group_by_unknown_column_raises() -> None:
     else:
         raise AssertionError("expected KeyError")
     print("  grid group_by unknown raises OK")
-
 
 def main() -> None:
     print("Phase 2 sampling tests:")
@@ -209,7 +195,6 @@ def main() -> None:
     test_grid_group_by_preserves_max()
     test_grid_group_by_unknown_column_raises()
     print("\nAll Phase 2 tests passed")
-
 
 if __name__ == "__main__":
     main()

@@ -1,84 +1,116 @@
-# ampmdata
+# ampm-analyzer
 
-Python tools for importing, masking, and correcting AMPM data from the Renishaw 500S.
+Analysis pipeline for Renishaw 500S PBF-LB AMPM (post-process monitoring) data.
+
+Each Renishaw 500S build produces hundreds of layers, each containing ~250,000 monitoring rows recording per-pulse melt-pool intensity, plasma signal, laser back-reflection, and laser power along with the demanded XY position. A full build is ~80M rows. This package loads that data, masks it to the printed parts, clusters the points back into individual physical parts, links each cluster to the part metadata exported from QuantAM, and produces a coefficient-of-variation analysis plus interactive 3D and parametric plots.
+
+## Quickstart
+
+```bash
+# Install (from the project root)
+pip install -e .
+
+# Edit config.py at the project root with paths to your build
+# (the SOURCE directory containing 'Packet data for layer N, laser 4.txt' files,
+# the STL of the parts, and the QuantAM parts CSV)
+
+# Run the example coefficient-of-variation analysis
+python cov.py
+
+# Or open the per-layer interactive viewer
+python view_layers.py
+```
+
+The first run takes several minutes — the script converts every source `.txt` file to a per-layer Parquet cache, computes the STL-based mask, and runs DBSCAN. Subsequent runs are seconds because everything is cached on disk.
+
+See the [Installation](#installation) section below for more options.
+
+## Pipeline overview
+
+```mermaid
+flowchart LR
+    A[Source .txt files] --> B[DataStore<br/>per-layer Parquet cache]
+    B --> C[apply_mask<br/>STL → polygons]
+    C --> D[Mask cache<br/>.cache/mask_keep.pq]
+    D --> E[cluster_dbscan_chunked<br/>DBSCAN with Z-scaling]
+    E --> F[Cluster cache<br/>.cache/cluster_labels.pq]
+    F --> G[compute_part_id_map<br/>match centroids to parts CSV]
+    G --> H[compute_cov<br/>per-part stats]
+    H --> I[Plots:<br/>3D scatter, contour map,<br/>distributions]
+```
+
+Each stage is independent and cacheable. If you change clustering parameters but not the mask, only the cluster cache invalidates.
+
+See [docs/PIPELINE.md](docs/PIPELINE.md) for the full step-by-step.
+
+## Project layout
+
+```
+ampm-analyzer/
+├── ampm/                       # The package
+│   ├── datastore.py            # Source → per-layer Parquet cache
+│   ├── masking.py              # STL → per-layer 2D polygon masks
+│   ├── mask_cache.py           # Persistence for the masked-rows result
+│   ├── clustering.py           # DBSCAN (sampled + chunked variants)
+│   ├── cluster_cache.py        # Persistence for cluster labels
+│   ├── parts.py                # QuantAM CSV parser + cluster→part-ID
+│   ├── stats.py                # Coefficient of variation
+│   ├── correction.py           # XY-bias correction polynomial
+│   ├── plotting.py             # All Plotly figure builders
+│   └── sampling.py             # Random / stride / grid downsamplers
+├── config.py                   # Paths and physical parameters
+├── cov.py                      # Example: CoV analysis end-to-end
+├── view_layers.py              # Per-layer interactive viewer
+├── tests/                      # 166 tests across 11 phases
+├── pyproject.toml              # Project metadata, dependencies, pytest config
+└── docs/                       # Detailed chapter docs
+    ├── PIPELINE.md             # End-to-end flow
+    ├── CLUSTERING.md           # DBSCAN tuning + memory
+    ├── CACHING.md              # Cache files + invalidation
+    ├── PARTS.md                # QuantAM CSV + part assignment
+    ├── PLOTTING.md             # Plot functions + file size
+    └── CORRECTION.md           # XY-bias correction
+```
+
+## Where to read next
+
+- **Just want to run something** → edit `config.py` paths, run `python cov.py`
+- **Tuning DBSCAN for a new build** → [docs/CLUSTERING.md](docs/CLUSTERING.md)
+- **Cache misbehaving / want to clear it** → [docs/CACHING.md](docs/CACHING.md)
+- **A part isn't being identified correctly** → [docs/PARTS.md](docs/PARTS.md)
+- **Want to add a new plot** → [docs/PLOTTING.md](docs/PLOTTING.md)
+- **Different machine or sensor than the MAIN MeltVIEW** → [docs/CORRECTION.md](docs/CORRECTION.md)
 
 ## Installation
 
-Clone the repository and install the required dependencies:
+The package is installable in editable mode from the project root:
 
 ```bash
-pip install numpy pandas shapely trimesh networkx rtree scipy h5py
+pip install -e .
 ```
 
-## Usage
+That installs `ampm` plus all required dependencies (polars, plotly, scikit-learn, scipy, trimesh, shapely, etc.). Editable mode means edits to the source tree are picked up immediately — useful while developing.
 
-### 1. Import
+Requires Python 3.11 or newer.
 
-Import AMPM layer data from a directory of exported packet files. A rectangular region of interest can be specified to limit the data to a specific area of the build plate.
+To also install the test framework:
 
-```python
-from ampm import AMPMData
-
-data = AMPMData.from_directory(
-    filepath="path/to/ampm/export/packets",
-    start_layer=1,
-    end_layer=100,
-    x_min=-125.0,   # optional, default ±125mm
-    x_max=125.0,
-    y_min=-125.0,
-    y_max=125.0,
-    laser_number=4, # optional, default 4
-)
+```bash
+pip install -e ".[dev]"
 ```
 
-Each layer is stored as a numpy array with 7 columns: `[Time, Dwell, X, Y, LaserVIEW, Plasma, Meltpool]`.
+## Running tests
 
-### 2. Mask
-
-Mask the data in-place to only retain points that fall within the part geometry, using the full plate STL file exported from QuantAM.
-
-```python
-data.mask(
-    stl_path="path/to/fullplate.stl",
-    layer_thickness=0.03,  # optional, default 0.03mm
-)
+```bash
+pytest                          # All 166 tests, ~25 seconds
+pytest tests/test_phase8.py     # Just the parts module tests
+python tests/test_phase11.py    # Direct invocation also works
 ```
 
-### 3. Correct
+(Requires `pip install -e ".[dev]"` to get pytest itself.)
 
-Apply a LaserVIEW-based XY positional correction to the MeltPool signal in-place, to account for optical sensitivity variation across the build plate.
+## Limitations
 
-> **Note:** This correction is only applicable to data from the **main Renishaw 500S machine**. Do NOT apply it to RBV machine data!
-
-```python
-data.correct()
-```
-
-### Full pipeline
-
-```python
-from ampm import AMPMData
-
-data = AMPMData.from_directory("path/to/ampm/export/packets", start_layer=1, end_layer=100)
-data.mask("path/to/fullplate.stl")
-data.correct()  # main machine only
-
-print(f"Imported {len(data)} layers")
-```
-
-### Saving and loading
-
-Masking is the most expensive step. Save the masked/corrected data state to an HDF5 file to skip it on subsequent runs:
-
-```python
-# First run
-data = AMPMData.from_directory("path/to/ampm/export/packets", start_layer=1, end_layer=100)
-data.mask("path/to/fullplate.stl")
-data.correct
-data.save("masked_data.h5")
-
-# Subsequent runs
-data = AMPMData.load("masked_data.h5")
-```
-
-The `.h5` file can also be read directly in MATLAB using `h5read`.
+- The default polynomial in `correction.py` is calibrated for the **MAIN machine's MeltVIEW melt pool (mean) signal only**. Pass your own `power_matrix` and `coefficients` for other sensors or machines (RBV, etc.).
+- DBSCAN tuning is build-dependent. The defaults in `cov.py` are validated for the JR299 Sterling parametric build (20 parts, 5 mm minimum spacing). For different geometries you may need to retune `EPS_XY` — see [docs/CLUSTERING.md](docs/CLUSTERING.md).
+- Windows paths containing `[` or `]` characters require explicit handling because Polars treats them as glob metacharacters. The package handles this everywhere internally; just be aware if you're writing new code that touches Parquet paths.

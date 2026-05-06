@@ -19,10 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ampm.parts import QuantAMParts, apply_part_id_map, compute_part_id_map, join_parts_with_stats
 
-
-# --------------------------------------------------------------------------- #
-# Synthetic file builders
-# --------------------------------------------------------------------------- #
 def _make_minimal_file() -> str:
     """Two sections — Parent Parts and Scan Volume — with three parts each."""
     return (
@@ -47,7 +43,6 @@ def _make_minimal_file() -> str:
         ',"3.s","Part(3)","150","150","60",\n'
     )
 
-
 def test_section_discovery() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="parts_test_"))
     try:
@@ -61,7 +56,6 @@ def test_section_discovery() -> None:
         print("  section discovery OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_parent_parts_table() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="parts_test_"))
@@ -82,7 +76,6 @@ def test_parent_parts_table() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_volume_parameters_default_variant() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="parts_test_"))
     try:
@@ -102,7 +95,6 @@ def test_volume_parameters_default_variant() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_volume_parameters_support_variant() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="parts_test_"))
     try:
@@ -117,7 +109,6 @@ def test_volume_parameters_support_variant() -> None:
         print("  volume_parameters (variant=s) OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_tab_access_by_number() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="parts_test_"))
@@ -139,7 +130,6 @@ def test_tab_access_by_number() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_unknown_section_raises() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="parts_test_"))
     try:
@@ -156,7 +146,6 @@ def test_unknown_section_raises() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_missing_file_raises() -> None:
     try:
         QuantAMParts.from_path("/no/such/file.csv")
@@ -165,7 +154,6 @@ def test_missing_file_raises() -> None:
     else:
         raise AssertionError("expected FileNotFoundError")
     print("  missing file raises OK")
-
 
 def test_no_sections_raises() -> None:
     """A file with no Tab- markers should raise a helpful error."""
@@ -182,7 +170,6 @@ def test_no_sections_raises() -> None:
         print("  no sections raises clearly OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_non_numeric_columns_stay_string() -> None:
     """A column with 'N\\A' values should not be coerced to numeric."""
@@ -208,7 +195,6 @@ def test_non_numeric_columns_stay_string() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_real_file_smoke() -> None:
     """Smoke test against the real sample file if it's available."""
     real = Path("/mnt/user-data/uploads/1777618604995_JR299_sterling_parts.csv")
@@ -227,10 +213,7 @@ def test_real_file_smoke() -> None:
     assert abs(p1["Y Position"] - (-11.585)) < 1e-6
     print(f"  real file smoke ({pp.height} parts, {len(parts.section_names)} sections) OK")
 
-
-# --------------------------------------------------------------------------- #
 # Cluster -> Part ID assignment
-# --------------------------------------------------------------------------- #
 def _make_three_part_clustering() -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Return (clustered_df, parts_table) where:
@@ -263,13 +246,11 @@ def _make_three_part_clustering() -> tuple[pl.DataFrame, pl.DataFrame]:
     })
     return clustered, parts_table
 
-
 def test_compute_part_id_map_basic() -> None:
     clustered, parts_table = _make_three_part_clustering()
     mapping = compute_part_id_map(clustered, parts_table, verbose=False)
     assert mapping == {0: "Part(1)", 1: "Part(2)", 2: "Part(3)"}
     print("  compute_part_id_map basic OK")
-
 
 def test_apply_part_id_map_basic() -> None:
     clustered, parts_table = _make_three_part_clustering()
@@ -285,7 +266,6 @@ def test_apply_part_id_map_basic() -> None:
     assert n["part_id"].is_null().all()
     print("  apply_part_id_map default (null for noise) OK")
 
-
 def test_apply_part_id_map_noise_label() -> None:
     clustered, parts_table = _make_three_part_clustering()
     mapping = compute_part_id_map(clustered, parts_table, verbose=False)
@@ -293,7 +273,6 @@ def test_apply_part_id_map_noise_label() -> None:
     n = out.filter(pl.col("cluster") == -1)
     assert (n["part_id"] == "noise").all()
     print("  apply_part_id_map with noise_label OK")
-
 
 def test_compute_part_id_map_collision_warning(capsys=None) -> None:
     """If 4 clusters but 3 parts, warn that two clusters map to the same part."""
@@ -320,7 +299,6 @@ def test_compute_part_id_map_collision_warning(capsys=None) -> None:
     assert mapping[3] == "Part(1)"
     print("  collision warning OK")
 
-
 def test_compute_part_id_map_far_warning() -> None:
     clustered, parts_table = _make_three_part_clustering()
     # Add a cluster at (1000, 1000) — far from all parts.
@@ -341,7 +319,6 @@ def test_compute_part_id_map_far_warning() -> None:
     assert "more than 5.0 mm" in buf.getvalue()
     print("  far cluster warning OK")
 
-
 def test_compute_part_id_map_no_clusters() -> None:
     """All rows are noise — should return an empty dict without crashing."""
     df = pl.DataFrame({
@@ -355,7 +332,6 @@ def test_compute_part_id_map_no_clusters() -> None:
     mapping = compute_part_id_map(df, parts_table, verbose=False)
     assert mapping == {}
     print("  no clusters returns empty map OK")
-
 
 def test_compute_part_id_map_unknown_column_raises() -> None:
     clustered, parts_table = _make_three_part_clustering()
@@ -375,7 +351,6 @@ def test_compute_part_id_map_unknown_column_raises() -> None:
         raise AssertionError("expected KeyError")
     print("  unknown column raises OK")
 
-
 def test_apply_part_id_map_unknown_cluster_id_passes_through() -> None:
     """Cluster ids in the data not present in the mapping should fall back
     to noise_label without raising."""
@@ -388,7 +363,6 @@ def test_apply_part_id_map_unknown_cluster_id_passes_through() -> None:
     out = apply_part_id_map(df, mapping, noise_label="unmapped")
     assert out["part_id"].to_list() == ["Part(1)", "unmapped", "unmapped"]
     print("  unknown cluster id falls back to noise_label OK")
-
 
 def test_real_file_with_synthetic_clusters() -> None:
     """End-to-end: parse the real parts CSV, place synthetic clusters at
@@ -426,10 +400,7 @@ def test_real_file_with_synthetic_clusters() -> None:
         )
     print(f"  real file end-to-end ({pp.height} parts mapped 1:1) OK")
 
-
-# --------------------------------------------------------------------------- #
 # volume_parameters_with_speed
-# --------------------------------------------------------------------------- #
 def _make_parametric_file() -> str:
     """Two-section file with parametric Hatches params for 3 parts."""
     return (
@@ -447,7 +418,6 @@ def _make_parametric_file() -> str:
         ',"2.1","Part(2)","200","0.085","75",\n'
         ',"3.1","Part(3)","250","0.085","90",\n'
     )
-
 
 def test_volume_parameters_with_speed_basic() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="parts_test_"))
@@ -468,7 +438,6 @@ def test_volume_parameters_with_speed_basic() -> None:
         print("  volume_parameters_with_speed math OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_volume_parameters_with_speed_missing_columns_raises() -> None:
     """If the CSV lacks Point Distance or Exposure Time, raise clearly."""
@@ -498,7 +467,6 @@ def test_volume_parameters_with_speed_missing_columns_raises() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_volume_parameters_with_speed_real_file() -> None:
     """Smoke-test against the real CSV."""
     real = Path("/mnt/user-data/uploads/1777618604995_JR299_sterling_parts.csv")
@@ -516,10 +484,7 @@ def test_volume_parameters_with_speed_real_file() -> None:
     print(f"  volume_parameters_with_speed real file ({vps.height} parts, "
           f"speeds {speeds.min():.0f}-{speeds.max():.0f} mm/s) OK")
 
-
-# --------------------------------------------------------------------------- #
 # join_parts_with_stats
-# --------------------------------------------------------------------------- #
 def test_join_parts_with_stats_basic() -> None:
     stats = pl.DataFrame({
         "part_id": ["Part(1)", "Part(2)", "Part(3)"],
@@ -540,7 +505,6 @@ def test_join_parts_with_stats_basic() -> None:
     assert row2["Hatch Power"] == 200.0
     assert abs(row2["cov_signal"] - 0.2) < 1e-9
     print("  join_parts_with_stats basic OK")
-
 
 def test_join_parts_with_stats_missing_in_parts_warns() -> None:
     stats = pl.DataFrame({
@@ -563,7 +527,6 @@ def test_join_parts_with_stats_missing_in_parts_warns() -> None:
     assert row99["Hatch Power"] is None
     print("  join warns on missing parts in parts_table OK")
 
-
 def test_join_parts_with_stats_extras_in_parts_noted() -> None:
     """If parts_table has parts not in stats_table, note them."""
     stats = pl.DataFrame({
@@ -585,7 +548,6 @@ def test_join_parts_with_stats_extras_in_parts_noted() -> None:
     assert out.height == 1
     print("  join notes extras in parts_table OK")
 
-
 def test_join_parts_with_stats_unknown_column_raises() -> None:
     stats = pl.DataFrame({"part_id": ["Part(1)"]})
     parts = pl.DataFrame({"Part ID": ["Part(1)"]})
@@ -598,7 +560,6 @@ def test_join_parts_with_stats_unknown_column_raises() -> None:
     else:
         raise AssertionError("expected KeyError")
     print("  join_parts_with_stats unknown col raises OK")
-
 
 def test_join_parts_with_stats_real_pipeline() -> None:
     """End-to-end: real parts file + synthetic CoV table + plot-ready join."""
@@ -621,7 +582,6 @@ def test_join_parts_with_stats_real_pipeline() -> None:
     # All Hatches Power values should be non-null (every part has parameters).
     assert out["Hatches Power"].null_count() == 0
     print(f"  join real pipeline ({out.height} parts joined) OK")
-
 
 def main() -> None:
     print("Phase 8 parts tests:")
@@ -653,7 +613,6 @@ def main() -> None:
     test_join_parts_with_stats_unknown_column_raises()
     test_join_parts_with_stats_real_pipeline()
     print("\nAll Phase 8 tests passed")
-
 
 if __name__ == "__main__":
     main()

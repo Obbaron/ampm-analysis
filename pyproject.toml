@@ -1,3 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ampm-analyzer"
+version = "0.1.0"
+description = "Analysis pipeline for Renishaw 500S PBF-LB AMPM (post-process monitoring) data"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    {name = "Oliver H. Page", email = "oliverhpage@gmail.com"},
+]
+license = {text = "For internal use only"}
+dependencies = [
+    "polars>=1.0",
+    "pyarrow>=14",
+    "plotly>=5.0",
+    "trimesh[easy]>=4.0",
+    "shapely>=2.0",
+    "rtree>=1.0",
+    "networkx>=3.0",
+    "scikit-learn>=1.3",
+    "scipy>=1.10",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["ampm*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

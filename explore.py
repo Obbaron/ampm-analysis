@@ -1,8 +1,7 @@
 """
 explore.py — full pipeline: load, mask, cluster, optionally correct
 melt-pool signal, assign part IDs, analyze process stability via CoV,
-and visualize, including a parametric process map and a per-layer signal
-viewer.
+and visualize chosen data columns.
 """
 
 from pathlib import Path
@@ -41,12 +40,10 @@ MIN_SAMPLES = 10
 LAYERS_PER_CHUNK = 11
 OVERLAP_LAYERS = 2
 
-CORRECT_MELTPOOL = False
+CORRECT_MELTPOOL = True
 
 SIGNALS = [
     "MeltVIEW melt pool (mean)",
-    "MeltVIEW plasma (mean)",
-    "Laser back reflection (mean)",
     "Laser output power (mean)",
 ]
 COV_PLOT_SIGNAL = (

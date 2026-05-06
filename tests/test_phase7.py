@@ -23,7 +23,6 @@ from ampm.cluster_cache import (
     save_cluster_labels,
 )
 
-
 def make_df(n: int = 1000, seed: int = 0) -> pl.DataFrame:
     rng = np.random.default_rng(seed)
     # Make (layer, Start time) globally unique. Distribute n rows across
@@ -40,13 +39,11 @@ def make_df(n: int = 1000, seed: int = 0) -> pl.DataFrame:
         "Z": rng.uniform(0, 6, n).astype(np.float32),
     })
 
-
 def make_clustered(n: int = 1000, seed: int = 0) -> pl.DataFrame:
     df = make_df(n, seed)
     # Assign labels deterministically: 0 if X<0, 1 otherwise.
     cluster = np.where(df["Demand X"].to_numpy() < 0, 0, 1).astype(np.int32)
     return df.with_columns(pl.Series("cluster", cluster))
-
 
 def test_round_trip_basic() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
@@ -65,7 +62,6 @@ def test_round_trip_basic() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_params_mismatch_strict_raises() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
     try:
@@ -83,7 +79,6 @@ def test_params_mismatch_strict_raises() -> None:
         print("  params mismatch (strict) raises OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_params_mismatch_lax_falls_through() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
@@ -108,7 +103,6 @@ def test_params_mismatch_lax_falls_through() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_missing_file() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
     try:
@@ -122,7 +116,6 @@ def test_missing_file() -> None:
         print("  missing file raises OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_partial_match_unmatched_rows_get_neg1() -> None:
     """Cache has 100 rows; new df has 200 rows (100 in cache + 100 new).
@@ -150,7 +143,6 @@ def test_partial_match_unmatched_rows_get_neg1() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_uniqueness_check_at_save() -> None:
     """save should refuse if (layer, Start time) is not unique."""
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
@@ -171,7 +163,6 @@ def test_uniqueness_check_at_save() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_cluster_or_load_first_call_computes() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
     try:
@@ -191,7 +182,6 @@ def test_cluster_or_load_first_call_computes() -> None:
         print("  cluster_or_load first call computes & saves OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_cluster_or_load_second_call_loads() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
@@ -214,7 +204,6 @@ def test_cluster_or_load_second_call_loads() -> None:
         print("  cluster_or_load second call loads (no recompute) OK")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
 
 def test_cluster_or_load_param_change_recomputes() -> None:
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
@@ -240,7 +229,6 @@ def test_cluster_or_load_param_change_recomputes() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_dtype_tolerant_join() -> None:
     """If df's key columns have a different dtype than the cache, join still works."""
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
@@ -261,7 +249,6 @@ def test_dtype_tolerant_join() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_non_serializable_params_raises() -> None:
     """Passing a Path object should still work because we use default=str."""
     tmp = Path(tempfile.mkdtemp(prefix="cache_test_"))
@@ -279,7 +266,6 @@ def test_non_serializable_params_raises() -> None:
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
-
 def test_bracketed_path_round_trip() -> None:
     """Regression for Windows path containing '[' and ']' (glob metacharacters)."""
     parent = Path(tempfile.mkdtemp(prefix="cache_brackets_"))
@@ -296,7 +282,6 @@ def test_bracketed_path_round_trip() -> None:
     finally:
         shutil.rmtree(parent, ignore_errors=True)
 
-
 def main() -> None:
     print("Phase 7 cluster-cache tests:")
     test_round_trip_basic()
@@ -312,7 +297,6 @@ def main() -> None:
     test_non_serializable_params_raises()
     test_bracketed_path_round_trip()
     print("\nAll Phase 7 tests passed")
-
 
 if __name__ == "__main__":
     main()

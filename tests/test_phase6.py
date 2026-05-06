@@ -10,7 +10,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-
 import numpy as np
 import polars as pl
 
@@ -21,7 +20,6 @@ from ampm.clustering import (
     cluster_dbscan_chunked,
     cluster_summary,
 )
-
 
 def make_columnar_parts(
     n_parts: int = 4,
@@ -53,7 +51,6 @@ def make_columnar_parts(
                 truth.append(part_id)
     return pl.DataFrame(rows), np.array(truth, dtype=np.int32)
 
-
 def test_basic_recovery_3d() -> None:
     """No chunk boundary needed (single chunk covers everything)."""
     df, truth = make_columnar_parts(n_parts=3, layers=20)
@@ -76,7 +73,6 @@ def test_basic_recovery_3d() -> None:
             f"Part {part_id} fragmented across {cluster_ids}"
         )
     print("  basic 3d recovery (single chunk) OK")
-
 
 def test_multi_chunk_no_fragmentation() -> None:
     """
@@ -104,7 +100,6 @@ def test_multi_chunk_no_fragmentation() -> None:
         )
     print("  multi-chunk no fragmentation OK")
 
-
 def test_default_overlap_calculation() -> None:
     """If overlap_layers=None, it should be auto-computed."""
     df, truth = make_columnar_parts(n_parts=2, layers=80)
@@ -120,7 +115,6 @@ def test_default_overlap_calculation() -> None:
     n_clusters = len({L for L in labels if L >= 0})
     assert n_clusters == 2, n_clusters
     print("  default overlap calc OK")
-
 
 def test_overlap_clamping() -> None:
     """overlap_layers=2 with eps_z=0.15 needs clamping up to ~10."""
@@ -143,7 +137,6 @@ def test_overlap_clamping() -> None:
     assert len({L for L in labels if L >= 0}) == 2
     print("  overlap clamping warns and works OK")
 
-
 def test_overlap_too_large_raises() -> None:
     df, _ = make_columnar_parts(n_parts=2, layers=80)
     try:
@@ -160,7 +153,6 @@ def test_overlap_too_large_raises() -> None:
         raise AssertionError("expected ValueError")
     print("  overlap >= chunk size raises OK")
 
-
 def test_2d_mode() -> None:
     df, truth = make_columnar_parts(n_parts=4, layers=50)
     out = cluster_dbscan_chunked(
@@ -174,7 +166,6 @@ def test_2d_mode() -> None:
     assert n_clusters == 4, n_clusters
     print("  2d mode OK")
 
-
 def test_stable_labels_centroid_order() -> None:
     df, _ = make_columnar_parts(n_parts=3, layers=30)
     out = cluster_dbscan_chunked(
@@ -186,7 +177,6 @@ def test_stable_labels_centroid_order() -> None:
     x_means = summary["x_mean"].to_list()
     assert x_means == sorted(x_means), x_means
     print("  stable_labels centroid order OK")
-
 
 def test_deterministic() -> None:
     df, _ = make_columnar_parts(n_parts=3, layers=80)
@@ -204,7 +194,6 @@ def test_deterministic() -> None:
     )
     assert a["cluster"].to_list() == b["cluster"].to_list()
     print("  deterministic OK")
-
 
 def test_handles_layer_gaps() -> None:
     """Skip some layers — chunked clustering shouldn't crash."""
@@ -224,7 +213,6 @@ def test_handles_layer_gaps() -> None:
     assert n_clusters >= 2
     print(f"  layer gaps handled (got {n_clusters} clusters) OK")
 
-
 def test_3d_requires_eps_z() -> None:
     df, _ = make_columnar_parts(n_parts=2, layers=20)
     try:
@@ -234,7 +222,6 @@ def test_3d_requires_eps_z() -> None:
     else:
         raise AssertionError("expected ValueError")
     print("  3d requires eps_z OK")
-
 
 def test_unknown_layer_col_raises() -> None:
     df, _ = make_columnar_parts(n_parts=2, layers=20)
@@ -248,7 +235,6 @@ def test_unknown_layer_col_raises() -> None:
     else:
         raise AssertionError("expected KeyError")
     print("  unknown layer_col raises OK")
-
 
 def test_match_with_non_chunked() -> None:
     """
@@ -282,7 +268,6 @@ def test_match_with_non_chunked() -> None:
         assert len(sets[0]) == 1 and len(sets[1]) == 1
     print("  agrees with non-chunked on small data OK")
 
-
 def test_dtype() -> None:
     df, _ = make_columnar_parts(n_parts=2, layers=20)
     out = cluster_dbscan_chunked(
@@ -291,7 +276,6 @@ def test_dtype() -> None:
     )
     assert out["cluster"].dtype == pl.Int32
     print("  cluster column dtype Int32 OK")
-
 
 def main() -> None:
     print("Phase 6 chunked-clustering tests:")
@@ -309,7 +293,6 @@ def main() -> None:
     test_match_with_non_chunked()
     test_dtype()
     print("\nAll Phase 6 tests passed")
-
 
 if __name__ == "__main__":
     main()

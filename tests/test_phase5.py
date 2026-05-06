@@ -22,10 +22,6 @@ from ampm.clustering import (
     k_distance_curve,
 )
 
-
-# --------------------------------------------------------------------------- #
-# Synthetic data
-# --------------------------------------------------------------------------- #
 def make_three_part_data(
     points_per_part: int = 5_000,
     layers: int = 50,
@@ -53,7 +49,6 @@ def make_three_part_data(
                 truth.append(part_id)
     return pl.DataFrame(rows), np.array(truth)
 
-
 def make_well_separated_2d(seed: int = 0) -> pl.DataFrame:
     """Three obvious clusters in the XY plane at a single Z."""
     rng = np.random.default_rng(seed)
@@ -66,10 +61,6 @@ def make_well_separated_2d(seed: int = 0) -> pl.DataFrame:
         }))
     return pl.concat(parts)
 
-
-# --------------------------------------------------------------------------- #
-# Tests
-# --------------------------------------------------------------------------- #
 def test_k_distance_curve_shape() -> None:
     df, _ = make_three_part_data()
     out = k_distance_curve(df, k=10, sample_size=2000, mode="3d",
@@ -84,14 +75,12 @@ def test_k_distance_curve_shape() -> None:
     assert d.max() > d[100]  # distinct distribution
     print(f"  k_distance_curve: monotonic, min={d.min():.3f}, max={d.max():.3f} OK")
 
-
 def test_k_distance_2d_mode() -> None:
     df = make_well_separated_2d()
     out = k_distance_curve(df, k=10, sample_size=1000, mode="2d", eps_xy=1.0)
     d = out["k-distance (mm)"].to_numpy()
     assert np.all(np.diff(d) >= 0)
     print("  k_distance_curve 2D mode OK")
-
 
 def test_dbscan_recovers_three_parts_3d() -> None:
     df, truth = make_three_part_data(points_per_part=3_000, layers=20)
@@ -116,7 +105,6 @@ def test_dbscan_recovers_three_parts_3d() -> None:
         )
     print(f"  DBSCAN 3D recovers 3 separated parts OK")
 
-
 def test_dbscan_2d_mode() -> None:
     df = make_well_separated_2d()
     out = cluster_dbscan(
@@ -127,7 +115,6 @@ def test_dbscan_2d_mode() -> None:
     n_clusters = len({L for L in labels if L >= 0})
     assert n_clusters == 3, n_clusters
     print("  DBSCAN 2D recovers 3 clusters OK")
-
 
 def test_anisotropic_z_scaling_matters() -> None:
     """
@@ -169,7 +156,6 @@ def test_anisotropic_z_scaling_matters() -> None:
     assert n2 == 1, f"Lenient eps_z should merge slabs, got {n2}"
     print("  anisotropic eps_xy/eps_z controls Z separability OK")
 
-
 def test_stable_labels_deterministic() -> None:
     df, _ = make_three_part_data(points_per_part=2_000, layers=10)
     out1 = cluster_dbscan(df, eps_xy=1.0, eps_z=0.06, mode="3d",
@@ -187,7 +173,6 @@ def test_stable_labels_deterministic() -> None:
     assert x_means == sorted(x_means), f"stable labels not centroid-sorted: {x_means}"
     print("  stable_labels deterministic + sorted by centroid OK")
 
-
 def test_cluster_summary() -> None:
     df, _ = make_three_part_data(points_per_part=2_000, layers=10)
     out = cluster_dbscan(df, eps_xy=1.0, eps_z=0.06, mode="3d",
@@ -201,7 +186,6 @@ def test_cluster_summary() -> None:
     assert s["n_rows"].sum() == df.height
     print(f"  cluster_summary OK: {s.height} clusters")
 
-
 def test_2d_mode_no_eps_z() -> None:
     df = make_well_separated_2d()
     # 2D mode shouldn't require eps_z at all.
@@ -209,7 +193,6 @@ def test_2d_mode_no_eps_z() -> None:
                         representative_size=1000, seed=0)
     assert "cluster" in out.columns
     print("  2D mode without eps_z OK")
-
 
 def test_3d_mode_requires_eps_z() -> None:
     df, _ = make_three_part_data()
@@ -221,7 +204,6 @@ def test_3d_mode_requires_eps_z() -> None:
         raise AssertionError("3D mode should require eps_z")
     print("  3D mode requires eps_z OK")
 
-
 def test_unknown_column_raises() -> None:
     df = make_well_separated_2d()
     try:
@@ -232,7 +214,6 @@ def test_unknown_column_raises() -> None:
     else:
         raise AssertionError("expected KeyError")
     print("  unknown column raises OK")
-
 
 def test_label_propagation_at_scale() -> None:
     """Build 500k points across 3 well-separated parts; ensure propagation
@@ -261,7 +242,6 @@ def test_label_propagation_at_scale() -> None:
     print(f"  label propagation: {df.height:,} rows in {dt:.2f}s, "
           f"accuracy={accuracy:.1%} OK")
 
-
 def main() -> None:
     print("Phase 5 clustering tests:")
     test_k_distance_curve_shape()
@@ -276,7 +256,6 @@ def main() -> None:
     test_unknown_column_raises()
     test_label_propagation_at_scale()
     print("\nAll Phase 5 tests passed")
-
 
 if __name__ == "__main__":
     main()
