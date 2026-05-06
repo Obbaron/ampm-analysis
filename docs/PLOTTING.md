@@ -109,7 +109,7 @@ fig = contour(
 
 Default `show_points=True` puts white-outlined markers at each measured combination so the visualization stays honest about which points are real and which are interpolated.
 
-Works best for **regular grids** (e.g., the JR299 5×4 DOE of speed × power). Irregular sample patterns produce noticeable gaps in the contour. No line smoothing — the shape reflects your actual data.
+Works best for **regular grids** of speed × power parameters. Irregular sample patterns produce noticeable gaps in the contour. No line smoothing; the shape reflects the actual data.
 
 ## kde
 
