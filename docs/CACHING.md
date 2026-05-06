@@ -98,7 +98,7 @@ Option 2 is the cleanest. The cache is small and rebuilds quickly.
 
 ## Disk space inventory
 
-For the JR299 Sterling build:
+Example files sizes for JR299:
 
 | Cache | Size |
 |-------|------|
