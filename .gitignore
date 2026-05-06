@@ -207,7 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 # Project data directories
-AMPM_data/
+data/
 data_files/
 mtt.py
 y.py
