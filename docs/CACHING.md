@@ -20,20 +20,12 @@ Invalidation: per-file, by source `.txt` mtime. If you rerun `cov.py` after edit
 
 Force a full rebuild:
 
-```bash
-# Windows
-Remove-Item "...\[3] Export Packets\.cache\layer=*.parquet"
-
-# Linux / macOS
-rm "/path/to/[3] Export Packets/.cache/"layer=*.parquet
-```
-
-Or programmatically:
-
 ```python
 store = DataStore(SOURCE)
 store.build_cache(force=True)
 ```
+
+Or simply delete the cache manually.
 
 The cache also auto-rebuilds if the schema changes (e.g., column dtypes change). The DataStore tracks a `CACHE_FORMAT_VERSION` and rebuilds when it doesn't match.
 
