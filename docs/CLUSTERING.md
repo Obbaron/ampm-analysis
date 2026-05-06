@@ -89,7 +89,7 @@ DBSCAN's memory peak is during the pairwise neighbor query within each chunk. Fo
 | 20               | ~5M            | ~6 GB             |
 | 50               | ~12M           | ~15 GB            |
 
-If your machine has 32 GB total and you're running everything else (Plotly, polars copies of the data), `layers_per_chunk=11-20` is the safe range. Below 11 you start spending more time on chunk boundaries than on the actual clustering.
+If your machine has 32 GB total and you're running everything else (Plotly, polars copies of the data), `layers_per_chunk=11-20` is still millions of data point and will hit your swap memory pretty hard. The downsampling method is more memory efficient but the clustering needs retuning for the now sparser data set.
 
 The chunked algorithm is parallelized via DBSCAN's `n_jobs=-1`, so all CPU cores are used. Expect ~99% CPU utilization throughout.
 
