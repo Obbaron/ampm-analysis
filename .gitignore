@@ -207,7 +207,6 @@ marimo/_lsp/
 __marimo__/
 
 # Project data directories
-JR306_Fares_plate/
 AMPM_data/
 data_files/
 mtt.py
