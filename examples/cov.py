@@ -1,6 +1,6 @@
 """
 cov.py — example AMPM analysis pipeline producing a coefficient-of-variation
-report and visualizations for a parametric build.
+report and visualisations for a parametric build.
 
 What it does
 ------------
@@ -21,7 +21,10 @@ Note: paths and physical parameters are read from config.py at the
 project root.
 """
 
+# Make config.py at the project root importable.
+import sys
 from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import polars as pl
 
@@ -51,8 +54,10 @@ from config import (
     LAYER_THICKNESS,
 )
 
-## CLUSTERING TUNING
-# You may need to tune EPS_XY (typically ~0.3-0.6) and verify the
+
+# ----- Clustering tuning -----
+# These have been validated for the JR299 Sterling build. For other
+# builds you may need to tune EPS_XY (typically ~0.3-0.6) and verify the
 # cluster count matches the known number of parts. LAYERS_PER_CHUNK +
 # OVERLAP_LAYERS control memory pressure during DBSCAN — smaller chunks
 # trade speed for lower peak RAM.
@@ -62,12 +67,17 @@ MIN_SAMPLES = 10
 LAYERS_PER_CHUNK = 11
 OVERLAP_LAYERS = 2
 
-# Apply MAIN machine MeltVIEW XY-bias correction
+# ----- Apply MAIN-machine MeltVIEW XY-bias correction? -----
+# Set False if your data is from the RBV machine or you don't want the
+# spatial correction applied.
 CORRECT_MELTPOOL = False
 
+# ----- Signals to compute CoV for -----
 SIGNALS = [
     "MeltVIEW melt pool (mean)",
     "MeltVIEW plasma (mean)",
+    "Laser back reflection (mean)",
+    "Laser output power (mean)",
 ]
 COV_PLOT_SIGNAL = (
     "MeltVIEW melt pool (mean) corrected"
@@ -77,12 +87,14 @@ COV_PLOT_SIGNAL = (
 
 
 def main() -> None:
+    # ----- Load cached source data -----
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
     print(store)
 
     df = store.query()
     print(f"Full slice: {df.height:,} rows")
 
+    # ----- Mask to part region (cached) -----
     mask_params = {
         "layers": (min(store.layers), max(store.layers)),
         "stl": str(STL),
@@ -112,6 +124,7 @@ def main() -> None:
     print(f"After mask: {df_masked.height:,} rows ({survival:.1%} kept)")
     del df
 
+    # ----- Cluster (cached) -----
     cluster_params = {
         "layers": (min(store.layers), max(store.layers)),
         "stl": str(STL),
@@ -154,6 +167,7 @@ def main() -> None:
         f"({n_noise / clustered.height:.1%})"
     )
 
+    # ----- Map clusters to QuantAM Part IDs -----
     quantam = QuantAMParts.from_path(PARTS_CSV)
     parts_table = quantam.parent_parts()
     print(f"\nLoaded {parts_table.height} parts from {Path(PARTS_CSV).name}")
@@ -165,6 +179,7 @@ def main() -> None:
 
     clustered = apply_part_id_map(clustered, mapping, noise_label="noise")
 
+    # ----- Optional MeltVIEW XY-bias correction -----
     if CORRECT_MELTPOOL:
         print("\nApplying MAIN-machine MeltVIEW XY-bias correction...")
         correction = MeltPoolCorrection()
@@ -176,6 +191,7 @@ def main() -> None:
     else:
         signals_for_cov = SIGNALS
 
+    # ----- Coefficient of Variation -----
     print("\nComputing overall Coefficient of Variation...")
     cov_overall = compute_cov(
         clustered,
@@ -186,6 +202,7 @@ def main() -> None:
     )
     print(cov_overall)
 
+    # ----- Join CoV with laser parameters -----
     print("\nLinking parts to CoV...")
     parts_with_speed = quantam.volume_parameters_with_speed()
     joined = join_parts_with_stats(cov_overall, parts_with_speed)
@@ -200,12 +217,15 @@ def main() -> None:
         )
     )
 
+    # Attach overall CoV onto every clustered row so the 3D plot can
+    # colour by it.
     clustered = clustered.join(
         cov_overall.select(["part_id", f"cov_{COV_PLOT_SIGNAL}"]),
         on="part_id",
         how="left",
     )
 
+    # ----- 3D build view, coloured by per-part CoV -----
     sample = prepare_for_plot(clustered, target_points=80_000, method="random", seed=0)
 
     print("\nCreating 3D scatter plot...")
@@ -226,6 +246,7 @@ def main() -> None:
     )
     fig_3d.show()
 
+    # ----- Parametric process map -----
     print("\nCreating parameter contour plot...")
     fig_process_map = contour(
         joined,
@@ -241,6 +262,7 @@ def main() -> None:
     )
     fig_process_map.show()
 
+    # ----- Distribution comparison: 3 most stable vs 3 least stable -----
     print("\nCreating distribution comparison plot...")
     ranked = cov_overall.sort(f"cov_{COV_PLOT_SIGNAL}")
     best_3 = ranked.head(3)["part_id"].to_list()

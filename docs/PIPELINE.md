@@ -136,7 +136,7 @@ See [PLOTTING.md](PLOTTING.md) for parameters, file size implications, and which
 `cov.py` runs stages 1–8 with the JR299 settings as a reference:
 
 ```bash
-python cov.py
+python examples/cov.py
 ```
 
 Produces three plots: a 3D scatter colored by per-part CoV, a parametric process map (CoV vs Hatches Power × Hatch Speed), and a KDE comparison of the most-stable and least-stable parts.

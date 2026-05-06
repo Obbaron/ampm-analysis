@@ -1,4 +1,4 @@
-# ampm-analyzer
+# ampm-analysis
 
 Analysis pipeline for Renishaw 500S PBF-LB AMPM (post-process monitoring) data.
 
@@ -15,10 +15,10 @@ pip install -e .
 # the STL of the parts, and the QuantAM parts CSV)
 
 # Run the example coefficient-of-variation analysis
-python cov.py
+python examples/cov.py
 
 # Or open the per-layer interactive viewer
-python view_layers.py
+python examples/view_layers.py
 ```
 
 The first run takes several minutes — the script converts every source `.txt` file to a per-layer Parquet cache, computes the STL-based mask, and runs DBSCAN. Subsequent runs are seconds because everything is cached on disk.
@@ -59,8 +59,10 @@ ampm-analyzer/
 │   ├── plotting.py             # All Plotly figure builders
 │   └── sampling.py             # Random / stride / grid downsamplers
 ├── config.py                   # Paths and physical parameters
-├── cov.py                      # Example: CoV analysis end-to-end
-├── view_layers.py              # Per-layer interactive viewer
+├── examples/                   # Runnable example scripts
+│   ├── cov.py                  # CoV analysis end-to-end
+│   ├── view_layers.py          # Per-layer interactive viewer
+│   └── tune_eps.py             # DBSCAN tuning workflow
 ├── tests/                      # 166 tests across 11 phases
 ├── pyproject.toml              # Project metadata, dependencies, pytest config
 └── docs/                       # Detailed chapter docs
@@ -72,10 +74,10 @@ ampm-analyzer/
     └── CORRECTION.md           # XY-bias correction
 ```
 
-## Where to read next
+## Where to next?
 
-- **Just want to run something** → edit `config.py` paths, run `python cov.py`
-- **Tuning DBSCAN for a new build** → [docs/CLUSTERING.md](docs/CLUSTERING.md)
+- **Just want to run something** → edit `config.py` paths, run `python examples/cov.py`
+- **Tuning DBSCAN for a new build** → run `python examples/tune_eps.py`, also see [docs/CLUSTERING.md](docs/CLUSTERING.md)
 - **Cache misbehaving / want to clear it** → [docs/CACHING.md](docs/CACHING.md)
 - **A part isn't being identified correctly** → [docs/PARTS.md](docs/PARTS.md)
 - **Want to add a new plot** → [docs/PLOTTING.md](docs/PLOTTING.md)

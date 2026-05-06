@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ampm-analyzer"
+name = "ampm-analysis"
 version = "0.1.0"
 description = "Analysis pipeline for Renishaw 500S PBF-LB AMPM (post-process monitoring) data"
 readme = "README.md"
