@@ -6,7 +6,7 @@
 
 The same physical melt pool produces a slightly different reading depending on where on the build plate it occurs. The bias is smooth — a polynomial function of (X, Y) with a weak dependence on LaserVIEW intensity — and was characterized off-line by fitting a polynomial regression model to known-flat reference data.
 
-Without the correction, the XY-bias contaminates anything that compares parts at different positions:
+Without the correction, the XY-bias skewes the data over the large build plate of the main machine:
 
 - Per-part CoV is inflated for parts near the edges of the build plate
 - Process maps show spurious gradients along whichever direction in (speed, power) space happens to correlate with XY position
