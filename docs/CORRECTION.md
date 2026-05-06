@@ -18,7 +18,7 @@ With the correction, what remains is the actual process variability.
 
 The default polynomial coefficients in `MeltPoolCorrection` are calibrated for:
 
-- The **MAIN machine** (NOT the RBV / build-volume validation machine)
+- The **MAIN machine** (NOT the RBV)
 - The **`MeltVIEW melt pool (mean)`** column specifically
 - Standard build-plate orientation
 
