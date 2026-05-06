@@ -96,7 +96,7 @@ Requires Python 3.11 or newer.
 To also install the test framework:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e .[dev]
 ```
 
 ## Running tests
