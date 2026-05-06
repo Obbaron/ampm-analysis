@@ -38,7 +38,6 @@ If your build has frequent missing-data layers, increase EPS_Z to
 rather than full-height columns, EPS_Z is too small.
 """
 
-# Make config.py at the project root importable.
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -66,17 +65,15 @@ from config import (
 )
 
 
-# ----- Tuning parameters (edit these) -----
-EPS_XY = 0.3                # The parameter you're tuning (mm)
-EPS_Z = 2 * LAYER_THICKNESS # Through-thickness eps; rule of thumb above
-MIN_SAMPLES = 10            # DBSCAN density threshold; same as your `cov.py`
-K = 10                      # k-th nearest neighbour for the k-distance curve
-MODE = "3d"                 # "2d" or "3d" — JR299 needs 3d
-SAMPLE_SIZE = 50_000        # k-distance curve points; 50k is plenty
+EPS_XY = 0.3
+EPS_Z = 2 * LAYER_THICKNESS
+MIN_SAMPLES = 10
+K = 10
+MODE = "3d"
+SAMPLE_SIZE = 50_000
 
 
 def main() -> None:
-    # ----- Load and mask (uses caches if present) -----
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
     print(store)
 
@@ -110,10 +107,7 @@ def main() -> None:
     print(f"After mask: {df_masked.height:,} rows")
     del df
 
-    # ----- Stage 1: k-distance curve -----
-    print(f"\n{'=' * 60}")
     print(f"Stage 1: k-distance curve (k={K}, sample={SAMPLE_SIZE:,})")
-    print(f"{'=' * 60}")
     print(
         "Plotting the k-th nearest-neighbour distance for each sampled "
         "point. The 'elbow' is a good candidate for EPS_XY.\n"
@@ -144,8 +138,6 @@ def main() -> None:
     )
     fig_kdist.show()
 
-    # Print a couple of quantiles so the user has numerical anchors
-    # without having to read pixel positions off the plot.
     q50 = curve["k-distance (mm)"].quantile(0.50)
     q90 = curve["k-distance (mm)"].quantile(0.90)
     q95 = curve["k-distance (mm)"].quantile(0.95)
@@ -160,10 +152,7 @@ def main() -> None:
         f"Your current EPS_XY = {EPS_XY} mm."
     )
 
-    # ----- Stage 2: trial DBSCAN with current EPS_XY -----
-    print(f"\n{'=' * 60}")
     print(f"Stage 2: DBSCAN with EPS_XY = {EPS_XY}, EPS_Z = {EPS_Z}")
-    print(f"{'=' * 60}")
 
     clustered = cluster_dbscan(
         df_masked,
@@ -196,10 +185,7 @@ def main() -> None:
             "low values (< 3×) usually mean clean clustering."
         )
 
-    # ----- Stage 3: validate against parts CSV -----
-    print(f"\n{'=' * 60}")
     print("Stage 3: validate cluster-to-part mapping")
-    print(f"{'=' * 60}")
 
     quantam = QuantAMParts.from_path(PARTS_CSV)
     parts_table = quantam.parent_parts()
@@ -221,8 +207,6 @@ def main() -> None:
                 "Try decreasing EPS_XY."
             )
 
-    # compute_part_id_map prints its own diagnostics about collisions,
-    # far matches, and unmatched parts.
     mapping = compute_part_id_map(clustered, parts_table)
 
     if n_clusters == n_expected and len(mapping) == n_expected:
@@ -233,8 +217,7 @@ def main() -> None:
         )
     else:
         print(
-            "\n✗ Tuning is not yet correct. Adjust EPS_XY based on the "
-            "guidance above and rerun."
+            "\nTuning is not yet correct. Adjust EPS_XY and rerun."
         )
 
     print("\nDone.")
