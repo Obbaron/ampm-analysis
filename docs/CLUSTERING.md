@@ -30,13 +30,12 @@ curve = k_distance_curve(df_masked, k=10, sample_size=50_000, mode="3d",
 # Plot 'Rank' vs 'k-distance (mm)'; eps_xy lives at the elbow.
 ```
 
-For the JR299 Sterling build the elbow is at ~0.3 mm, which matches the hatch spacing. Larger parts with sparser scan tracks need larger `eps_xy`.
+For the small builds, the elbow is ~0.3 mm, which matches the hatch spacing. Larger parts with sparser scan tracks need larger `eps_xy`.
 
 Common pitfalls:
 
 - **Too small** → clusters fragment (you get 50 clusters for 20 parts) and noise inflates
 - **Too large** → adjacent parts merge into one cluster
-- The right value is roughly **2-3× the hatch spacing**
 
 ## Tuning eps_z
 
@@ -52,7 +51,7 @@ Common values:
 
 `min_samples` is the density threshold. Each cluster must have at least one core point with this many neighbors within `eps`.
 
-- `min_samples = 10` — works for the JR299 data
+- `min_samples = 10` — works as a generous starting point
 - For lower-density data (smaller parts, sparser hatches), reduce to 5
 - Above 20, you start losing edges of clusters as noise
 
@@ -60,11 +59,9 @@ Common values:
 
 The single-pass DBSCAN we'd love to run can't fit 80M points × 80M neighbor matrix in memory. Two options:
 
-**Option A: downsample-and-propagate.** Run DBSCAN on a representative sample (say 200k points), then assign every other point to its nearest sample's cluster via a BallTree. Fast but fragile — at low representative density, clusters fragment because the sample doesn't capture them all.
+**Option A: downsample-and-propagate.** Run DBSCAN on a representative sample (say 800k points), then assign every other point to its nearest sample's cluster via a BallTree. Fast but fragile — at low representative density, clusters fragment because the sample doesn't capture them all.
 
 **Option B: chunked DBSCAN.** Process overlapping layer ranges. Within a chunk, DBSCAN runs on the full data for that chunk. Overlapping rows in adjacent chunks get matched and labels are merged via union-find.
-
-We default to **Option B** because it's robust at full data density.
 
 ```python
 from ampm.clustering import cluster_dbscan_chunked
@@ -75,7 +72,7 @@ clustered = cluster_dbscan_chunked(
     min_samples=10,
     mode="3d",
     layers_per_chunk=11,        # smaller = lower memory, more chunks
-    overlap_layers=2,           # at least ceil(eps_z / layer_thickness)
+    overlap_layers=None,           # at least ceil(eps_z / layer_thickness)
     verbose=True,
 )
 ```
