@@ -107,7 +107,7 @@ pytest tests/test_phase8.py     # Just the parts module tests
 python tests/test_phase11.py    # Direct invocation also works
 ```
 
-(Requires `pip install -e ".[dev]"` to get pytest itself.)
+(Requires `pip install -e .[dev]` to get pytest itself.)
 
 ## Limitations
 
