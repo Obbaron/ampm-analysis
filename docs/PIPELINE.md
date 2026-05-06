@@ -33,7 +33,7 @@ Raw monitoring data covers the whole build plate including support rafts, contou
 ```python
 from ampm.masking import build_mask, apply_mask
 mask = build_mask(STL, layers=store.layers, layer_thickness=0.03)
-df_masked = apply_mask(df, mask)                # 91-92% rows kept on JR299
+df_masked = apply_mask(df, mask)
 ```
 
 The mask is cached by SHA256 of the STL content, not by file mtime, so editing the STL in-place still invalidates correctly. `mask_or_load` from `ampm.mask_cache` wraps both steps with a Parquet-backed cache of the survivor row keys (see [CACHING.md](CACHING.md)).
