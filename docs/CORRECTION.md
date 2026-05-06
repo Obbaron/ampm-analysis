@@ -31,7 +31,7 @@ correction = MeltPoolCorrection(
 )
 ```
 
-If you don't have a calibration for your sensor, **don't apply the correction**. Leave `CORRECT_MELTPOOL = False` in `cov.py` and accept that XY-bias contributes to your CoV numbers.
+If you don't have a calibration for your sensor, **don't apply the correction**. Leave `CORRECT_MELTPOOL = False` in `cov.py`
 
 ## The math
 
