@@ -8,11 +8,9 @@ choices, plot settings) stays in the script that uses it.
 
 from pathlib import Path
 
-SOURCE = (
-    r"C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR288_OHP_Ti15Ag\AMPM output"
-)
-STL = r"C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR288_OHP_Ti15Ag\JR288_Ti15Ag_plate.stl"
-PARTS_CSV = r"C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR288_OHP_Ti15Ag\JR288_Ti15Ag_parts.csv"
+SOURCE = r"C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR314_14GHz_model_Fi_bool_Supp_cube\[3] Export Packets"
+STL = r"C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR314_14GHz_model_Fi_bool_Supp_cube\JR314_14GHz_fullplate.stl"
+PARTS_CSV = r"C:\Users\ohp460\Documents\Code\ampm-analysis\data\JR314_14GHz_model_Fi_bool_Supp_cube\JR314_14GHz_cube_parts.csv"
 
 MASK_CACHE = str(Path(SOURCE) / ".cache" / "fullplate_mask.pkl")
 MASK_KEEP_CACHE = str(Path(SOURCE) / ".cache" / "mask_keep.pq")
