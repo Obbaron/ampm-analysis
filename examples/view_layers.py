@@ -8,19 +8,17 @@ target point count internally.
 
 Run AFTER explore.py has populated the mask cache.
 """
-# Make config.py at the project root importable.
+
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from ampm import DataStore
 from ampm.mask_cache import load_mask_keep
 from ampm.plotting import scatter2d_layered
+from config import LAYER_THICKNESS, MASK_KEEP_CACHE, SOURCE
 
-from config import SOURCE, MASK_KEEP_CACHE, LAYER_THICKNESS
-
-
-# ----- Viewer settings (specific to this script) -----
 LAYERED_SIGNALS = [
     "MeltVIEW melt pool (mean)",
     "MeltVIEW plasma (mean)",
@@ -29,7 +27,6 @@ POINTS_PER_LAYER = 5_000
 
 
 def main() -> None:
-    # ----- Load only the columns we need via DataStore -----
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
     print(store)
 
@@ -38,15 +35,15 @@ def main() -> None:
     df = store.query(columns=needed_cols)
     print(f"  loaded {df.height:,} rows")
 
-    # ----- Apply the mask via cached keys (cheap semi-join) -----
     print("Applying cached mask...")
     df_masked = load_mask_keep(df, MASK_KEEP_CACHE, strict=False, verbose=True)
     print(f"  {df_masked.height:,} rows after mask")
     del df
 
-    # ----- Build the viewer; it handles per-layer random downsampling -----
-    print(f"Building interactive viewer ({len(LAYERED_SIGNALS)} signals, "
-          f"{POINTS_PER_LAYER}/layer)...")
+    print(
+        f"Building interactive viewer ({len(LAYERED_SIGNALS)} signals, "
+        f"{POINTS_PER_LAYER}/layer)..."
+    )
     fig = scatter2d_layered(
         df_masked,
         x="Demand X",
