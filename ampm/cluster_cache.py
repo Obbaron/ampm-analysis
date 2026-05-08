@@ -46,7 +46,7 @@ CACHE_FORMAT_VERSION = 1
 _KEY_COLUMNS: tuple[str, str] = ("layer", "Start time")
 _LABEL_COLUMN = "cluster"
 
-# Parquet file-level metadata keys (must be bytes for pyarrow).
+# Parquet metadata keys must be bytes for pyarrow
 _META_VERSION_KEY = b"ampm_cluster_cache_version"
 _META_PARAMS_KEY = b"ampm_cluster_cache_params"
 
@@ -298,7 +298,7 @@ def cluster_or_load(
         )
     except FileNotFoundError:
         if verbose:
-            print(f"  [cache] computing fresh clusters -> {cache_path}")
+            print(f"  [cache] computing fresh clusters → {cache_path}")
         clustered = cluster_fn(df)
         save_cluster_labels(clustered, cache_path, params=params, verbose=verbose)
         return clustered

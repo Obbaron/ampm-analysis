@@ -1,9 +1,7 @@
 """
-cov.py — example AMPM analysis pipeline producing a coefficient-of-variation
-report and visualisations for a parametric build.
+cov.py - example AMPM analysis pipeline producing a coefficient-of-variation
+report and visualizations for a parametric build.
 
-What it does
-------------
 Loads cached AMPM data, masks it to the part region (cached), runs
 chunked DBSCAN to identify each physical part (cached), assigns part IDs
 from the QuantAM parts CSV, and produces:
@@ -17,42 +15,40 @@ from the QuantAM parts CSV, and produces:
 This is intended as a starting template for parametric-build analysis.
 Tune the constants near the top, then run.
 
-Note: paths and physical parameters are read from config.py at the
-project root.
+Paths and physical parameters are read from config.py at project root.
 """
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import polars as pl
 
 from ampm import DataStore
-from ampm.sampling import prepare_for_plot
-from ampm.plotting import scatter3d, contour, kde
-from ampm.masking import build_mask, apply_mask
-from ampm.mask_cache import mask_or_load
-from ampm.clustering import cluster_dbscan_chunked
 from ampm.cluster_cache import cluster_or_load
-from ampm.stats import compute_cov
+from ampm.clustering import cluster_dbscan_chunked
 from ampm.correction import MeltPoolCorrection
+from ampm.mask_cache import mask_or_load
+from ampm.masking import apply_mask, build_mask
 from ampm.parts import (
     QuantAMParts,
     apply_part_id_map,
     compute_part_id_map,
     join_parts_with_stats,
 )
-
+from ampm.plotting import contour, kde, scatter3d
+from ampm.sampling import prepare_for_plot
+from ampm.stats import compute_cov
 from config import (
-    SOURCE,
-    STL,
-    PARTS_CSV,
-    MASK_CACHE,
-    MASK_KEEP_CACHE,
     CLUSTER_CACHE,
     LAYER_THICKNESS,
+    MASK_CACHE,
+    MASK_KEEP_CACHE,
+    PARTS_CSV,
+    SOURCE,
+    STL,
 )
-
 
 EPS_XY = 0.3
 EPS_Z = 0.06

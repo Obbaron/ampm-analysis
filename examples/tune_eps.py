@@ -1,7 +1,7 @@
 """
-tune_eps.py — interactive DBSCAN tuning workflow.
+tune_eps.py - interactive DBSCAN tuning workflow.
 
-Walks through three stages of tuning the in-plane neighbourhood radius
+Walks through three stages of tuning the in-plane neighborhood radius
 EPS_XY for clustering AMPM data into individual parts:
 
   Stage 1: Compute and plot the k-distance curve. The "elbow" of this
@@ -40,6 +40,7 @@ rather than full-height columns, EPS_Z is too small.
 
 import sys
 from pathlib import Path
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import polars as pl
@@ -54,7 +55,6 @@ from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, compute_part_id_map
 from ampm.plotting import scatter2d
-
 from config import (
     LAYER_THICKNESS,
     MASK_CACHE,
@@ -63,7 +63,6 @@ from config import (
     SOURCE,
     STL,
 )
-
 
 EPS_XY = 0.3
 EPS_Z = 2 * LAYER_THICKNESS
@@ -109,7 +108,7 @@ def main() -> None:
 
     print(f"Stage 1: k-distance curve (k={K}, sample={SAMPLE_SIZE:,})")
     print(
-        "Plotting the k-th nearest-neighbour distance for each sampled "
+        "Plotting the k-th nearest-neighbor distance for each sampled "
         "point. The 'elbow' is a good candidate for EPS_XY.\n"
     )
 
@@ -134,7 +133,7 @@ def main() -> None:
             f"Look for the elbow — that's your EPS_XY."
         ),
         xaxis_title="Rank (sorted)",
-        yaxis_title=f"Distance to {K}-th neighbour (mm)",
+        yaxis_title=f"Distance to {K}-th neighbor (mm)",
     )
     fig_kdist.show()
 
@@ -216,9 +215,7 @@ def main() -> None:
             f"noise {noise_pct:.2%}. EPS_XY = {EPS_XY} appears correct."
         )
     else:
-        print(
-            "\nTuning is not yet correct. Adjust EPS_XY and rerun."
-        )
+        print("\nTuning is not yet correct. Adjust EPS_XY and rerun.")
 
     print("\nDone.")
 

@@ -1,5 +1,5 @@
 """
-view_layers.py — interactive per-layer viewer for AMPM data.
+view_layers.py - interactive per-layer viewer for AMPM data.
 
 Loads cached AMPM data via DataStore (handles bracketed paths and the
 parquet layout), applies the cached mask, and hands the result to the
