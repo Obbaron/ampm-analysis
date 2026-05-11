@@ -17,7 +17,7 @@ import polars as pl
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ampm.parts import QuantAMParts, apply_part_id_map, compute_part_id_map, join_parts_with_stats
+from ampm.parts import QuantAMParts, apply_part_id_map, assign_nearest_part, compute_part_id_map, join_parts_with_stats
 
 def _make_minimal_file() -> str:
     """Two sections — Parent Parts and Scan Volume — with three parts each."""
@@ -583,6 +583,119 @@ def test_join_parts_with_stats_real_pipeline() -> None:
     assert out["Hatches Power"].null_count() == 0
     print(f"  join real pipeline ({out.height} parts joined) OK")
 
+
+def _make_parts_for_assign(positions: list[tuple[float, float]]) -> pl.DataFrame:
+    return pl.DataFrame({
+        "Part ID": [f"Part({i+1})" for i in range(len(positions))],
+        "X Position": [p[0] for p in positions],
+        "Y Position": [p[1] for p in positions],
+    })
+
+
+def test_assign_nearest_part_basic() -> None:
+    rng = np.random.default_rng(0)
+    parts = _make_parts_for_assign([(0, 0), (50, 0), (-50, 0)])
+    rows = []
+    for cx, cy in [(0, 0), (50, 0), (-50, 0)]:
+        for _ in range(500):
+            rows.append({"Demand X": cx + rng.normal(0, 2), "Demand Y": cy + rng.normal(0, 2)})
+    df = pl.DataFrame(rows)
+    out = assign_nearest_part(df, parts, verbose=False)
+    assert "part_id" in out.columns
+    counts = dict(out["part_id"].value_counts().iter_rows())
+    assert counts["Part(1)"] == 500
+    assert counts["Part(2)"] == 500
+    assert counts["Part(3)"] == 500
+    print("  assign_nearest_part basic OK")
+
+
+def test_assign_nearest_part_max_distance_labels_noise() -> None:
+    rng = np.random.default_rng(0)
+    parts = _make_parts_for_assign([(0, 0), (50, 0)])
+    rows = []
+    for _ in range(100):
+        rows.append({"Demand X": rng.normal(0, 1), "Demand Y": rng.normal(0, 1)})
+    for _ in range(50):
+        rows.append({"Demand X": rng.uniform(200, 300), "Demand Y": rng.uniform(200, 300)})
+    df = pl.DataFrame(rows)
+    out = assign_nearest_part(df, parts, max_distance_mm=10.0, verbose=False)
+    counts = dict(out["part_id"].value_counts().iter_rows())
+    assert counts["noise"] == 50
+    assert counts["Part(1)"] == 100
+    print("  assign_nearest_part max_distance_mm OK")
+
+
+def test_assign_nearest_part_no_max_distance_assigns_all() -> None:
+    rng = np.random.default_rng(0)
+    parts = _make_parts_for_assign([(0, 0), (50, 0)])
+    rows = []
+    for _ in range(100):
+        rows.append({"Demand X": rng.normal(0, 1), "Demand Y": rng.normal(0, 1)})
+    for _ in range(50):
+        rows.append({"Demand X": rng.uniform(200, 300), "Demand Y": rng.uniform(200, 300)})
+    df = pl.DataFrame(rows)
+    out = assign_nearest_part(df, parts, max_distance_mm=None, verbose=False)
+    # All 150 rows should be assigned (no noise label produced).
+    assert out["part_id"].null_count() == 0
+    counts = dict(out["part_id"].value_counts().iter_rows())
+    assert "noise" not in counts
+    # Far rows are nearer to Part(2)=(50,0) than Part(1)=(0,0).
+    assert counts["Part(2)"] == 50 + (counts["Part(2)"] - 50)
+    assert sum(counts.values()) == 150
+    print("  assign_nearest_part no max_distance assigns all OK")
+
+
+def test_assign_nearest_part_custom_noise_label() -> None:
+    parts = _make_parts_for_assign([(0, 0)])
+    df = pl.DataFrame({"Demand X": [100.0], "Demand Y": [100.0]})
+    out = assign_nearest_part(
+        df, parts, max_distance_mm=1.0, noise_label="off_plate", verbose=False
+    )
+    assert out["part_id"][0] == "off_plate"
+    print("  assign_nearest_part custom noise label OK")
+
+
+def test_assign_nearest_part_unknown_column_raises() -> None:
+    parts = _make_parts_for_assign([(0, 0)])
+    df = pl.DataFrame({"X": [0.0], "Y": [0.0]})
+    try:
+        assign_nearest_part(df, parts, verbose=False)
+    except KeyError:
+        pass
+    else:
+        raise AssertionError("expected KeyError for missing Demand X")
+    print("  assign_nearest_part unknown column raises OK")
+
+
+def test_assign_nearest_part_empty_parts_raises() -> None:
+    empty_parts = pl.DataFrame(
+        schema={"Part ID": pl.String, "X Position": pl.Float64, "Y Position": pl.Float64}
+    )
+    df = pl.DataFrame({"Demand X": [0.0], "Demand Y": [0.0]})
+    try:
+        assign_nearest_part(df, empty_parts, verbose=False)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for empty parts_table")
+    print("  assign_nearest_part empty parts raises OK")
+
+
+def test_assign_nearest_part_verbose_output() -> None:
+    """Verify verbose=True prints the per-part summary."""
+    parts = _make_parts_for_assign([(0, 0), (50, 0)])
+    df = pl.DataFrame({"Demand X": [0.0, 50.0], "Demand Y": [0.0, 0.0]})
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        assign_nearest_part(df, parts, verbose=True)
+    output = buf.getvalue()
+    assert "Part(1)" in output
+    assert "Part(2)" in output
+    assert "rows" in output
+    print("  assign_nearest_part verbose output OK")
+
+
 def main() -> None:
     print("Phase 8 parts tests:")
     test_section_discovery()
@@ -612,6 +725,13 @@ def main() -> None:
     test_join_parts_with_stats_extras_in_parts_noted()
     test_join_parts_with_stats_unknown_column_raises()
     test_join_parts_with_stats_real_pipeline()
+    test_assign_nearest_part_basic()
+    test_assign_nearest_part_max_distance_labels_noise()
+    test_assign_nearest_part_no_max_distance_assigns_all()
+    test_assign_nearest_part_custom_noise_label()
+    test_assign_nearest_part_unknown_column_raises()
+    test_assign_nearest_part_empty_parts_raises()
+    test_assign_nearest_part_verbose_output()
     print("\nAll Phase 8 tests passed")
 
 if __name__ == "__main__":

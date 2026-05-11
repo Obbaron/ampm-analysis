@@ -89,6 +89,37 @@ For a clean build, expect to see:
 
 Sub-millimeter max distance is a strong signal that everything is aligned correctly — the cluster centroids match the QuantAM-recorded part positions essentially exactly.
 
+## Skipping clustering — direct nearest-part assignment
+
+For builds with few, large, well-separated parts (typical medical implant builds), DBSCAN is unnecessary and harder to tune correctly. `assign_nearest_part` is a clustering-free alternative: each row gets the Part ID of its closest part by 2D Euclidean distance in (Demand X, Demand Y).
+
+```python
+from ampm.parts import assign_nearest_part
+
+clustered = assign_nearest_part(
+    df_masked,
+    parts_table,
+    max_distance_mm=70.0,   # rows farther than this become "noise"
+    noise_label="noise",
+)
+```
+
+The output is the same `part_id` String column that `apply_part_id_map` would produce, so all downstream functions (`compute_cov`, `join_parts_with_stats`, the plotters) work unchanged. See `examples/cov_direct.py` for a full pipeline using this approach.
+
+**When to use which:**
+
+| Situation | Use |
+|-----------|-----|
+| Parametric DOE with many small parts (5-10 mm), closely spaced | DBSCAN (`cov.py`) |
+| Few large parts (>30 mm) on a big build plate | direct (`cov_direct.py`) |
+| Single-part builds | direct |
+| Lattice or grid layouts with parts <5 mm apart | DBSCAN |
+| You want noise rejection on inter-part rapids | DBSCAN (or direct + `max_distance_mm`) |
+
+The direct method has no tuning parameters beyond `max_distance_mm`, no clustering cache, and runs in seconds. When parts are well-separated, it produces equivalent or better results than DBSCAN with no tuning.
+
+**Memory note:** `assign_nearest_part` builds an in-memory `(n_rows × n_parts)` distance matrix in float32. For 80M rows × 6 parts that peaks at ~2 GB. For builds with 50+ parts a KDTree-based approach would be more efficient, but the simple broadcast is faster for the small-parts-count case it's designed for.
+
 ## Joining stats with laser parameters
 
 For parametric studies you want per-part CoV alongside laser parameters. `join_parts_with_stats` bridges the column-name mismatch (`part_id` from `compute_cov` vs `Part ID` from QuantAM):
@@ -130,15 +161,3 @@ A single physical part has multiple rows in Tab 10 — one per scan variant:
 - `1.1.b` — sometimes seen for sub-features
 
 `volume_parameters(variant="1")` keeps only `*.1` rows. To analyze supports separately, call with `variant="s"`. To see everything, access `quantam["Scan Volume"]` directly — that's the raw DataFrame.
-
-## Why this is a clean rewrite
-
-The old code (`get_parts` in the legacy codebase) used:
-
-```python
-skipped_rows = 9 * (len(full_parts_list) + 4) + (len(parts_idx) + 10)
-```
-
-to navigate the file. This worked for the specific export structure that existed when it was written, but breaks if QuantAM adds a tab or any section grows. The new parser walks rows once, splits by `Tab -` headers and blank lines, and never hard-codes line counts.
-
-If you ever encounter a parts file the parser can't read, the most likely cause is a non-standard line-ending or unusual column naming in a Tab. Check `quantam.section_names` first; if the section list is wrong, the issue is in the section-finding regex (look at `_iter_sections` in `parts.py`).

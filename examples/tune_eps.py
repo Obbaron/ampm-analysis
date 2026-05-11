@@ -64,12 +64,11 @@ from config import (
     STL,
 )
 
-EPS_XY = 0.3
+EPS_XY = 0.65
 EPS_Z = 2 * LAYER_THICKNESS
-MIN_SAMPLES = 10
 K = 10
 MODE = "3d"
-SAMPLE_SIZE = 50_000
+SAMPLE_SIZE = 1000000
 
 
 def main() -> None:
@@ -86,7 +85,7 @@ def main() -> None:
         "layer_thickness": LAYER_THICKNESS,
     }
 
-    def do_masking(d: pl.DataFrame) -> pl.DataFrame:
+    def masking_wrapper(d: pl.DataFrame) -> pl.DataFrame:
         mask = build_mask(
             STL,
             layers=store.layers,
@@ -99,7 +98,7 @@ def main() -> None:
     df_masked = mask_or_load(
         df,
         cache_path=MASK_KEEP_CACHE,
-        mask_fn=do_masking,
+        mask_fn=masking_wrapper,
         params=mask_params,
         strict=True,
     )
@@ -122,20 +121,20 @@ def main() -> None:
         seed=0,
     )
 
-    fig_kdist = scatter2d(
-        curve,
-        x="Rank",
-        y="k-distance (mm)",
-        equal_aspect=False,
-        size=4,
-        title=(
-            f"k-distance curve (k={K}, mode={MODE}). "
-            f"Look for the elbow — that's your EPS_XY."
-        ),
-        xaxis_title="Rank (sorted)",
-        yaxis_title=f"Distance to {K}-th neighbor (mm)",
-    )
-    fig_kdist.show()
+    # fig_kdist = scatter2d(
+    #    curve,
+    #    x="Rank",
+    #    y="k-distance (mm)",
+    #    equal_aspect=False,
+    #    size=4,
+    #    title=(
+    #        f"k-distance curve (k={K}, mode={MODE}). "
+    #        f"Look for the elbow — that's your EPS_XY."
+    #    ),
+    #    xaxis_title="Rank (sorted)",
+    #    yaxis_title=f"Distance to {K}-th neighbor (mm)",
+    # )
+    # fig_kdist.show()
 
     q50 = curve["k-distance (mm)"].quantile(0.50)
     q90 = curve["k-distance (mm)"].quantile(0.90)
@@ -146,78 +145,7 @@ def main() -> None:
     print(f"  90th percentile: {q90:.3f} mm")
     print(f"  95th percentile: {q95:.3f} mm")
     print(f"  99th percentile: {q99:.3f} mm")
-    print(
-        f"\nThe elbow usually sits between the 90th and 99th percentile. "
-        f"Your current EPS_XY = {EPS_XY} mm."
-    )
-
-    print(f"Stage 2: DBSCAN with EPS_XY = {EPS_XY}, EPS_Z = {EPS_Z}")
-
-    clustered = cluster_dbscan(
-        df_masked,
-        eps_xy=EPS_XY,
-        eps_z=EPS_Z,
-        min_samples=MIN_SAMPLES,
-        mode=MODE,
-    )
-
-    n_clusters = sum(1 for c in clustered["cluster"].unique() if c >= 0)
-    n_noise = (clustered["cluster"] == -1).sum()
-    noise_pct = n_noise / clustered.height
-    print(f"Clusters found: {n_clusters}")
-    print(f"Noise points:   {n_noise:,} ({noise_pct:.2%})")
-
-    summary = cluster_summary(clustered)
-    if n_clusters > 0:
-        print("\nPer-cluster row counts and centroids:")
-        cluster_rows = summary.filter(pl.col("cluster") >= 0)
-        rows_min = cluster_rows["n_rows"].min()
-        rows_max = cluster_rows["n_rows"].max()
-        rows_ratio = rows_max / rows_min if rows_min > 0 else float("inf")
-        print(
-            cluster_rows.select(
-                ["cluster", "n_rows", "x_mean", "y_mean", "z_min", "z_max"]
-            )
-        )
-        print(
-            f"\nCluster size ratio (max/min): {rows_ratio:.1f}× — "
-            "low values (< 3×) usually mean clean clustering."
-        )
-
-    print("Stage 3: validate cluster-to-part mapping")
-
-    quantam = QuantAMParts.from_path(PARTS_CSV)
-    parts_table = quantam.parent_parts()
-    n_expected = parts_table.height
-    print(
-        f"\nExpected {n_expected} parts (from {Path(PARTS_CSV).name}); "
-        f"DBSCAN found {n_clusters} clusters."
-    )
-
-    if n_clusters != n_expected:
-        if n_clusters > n_expected:
-            print(
-                f"  → {n_clusters - n_expected} too many clusters. "
-                "Try increasing EPS_XY."
-            )
-        else:
-            print(
-                f"  → {n_expected - n_clusters} too few clusters. "
-                "Try decreasing EPS_XY."
-            )
-
-    mapping = compute_part_id_map(clustered, parts_table)
-
-    if n_clusters == n_expected and len(mapping) == n_expected:
-        print(
-            f"\n✓ Tuning looks good: {n_clusters} clusters, "
-            f"{len(mapping)} parts mapped, "
-            f"noise {noise_pct:.2%}. EPS_XY = {EPS_XY} appears correct."
-        )
-    else:
-        print("\nTuning is not yet correct. Adjust EPS_XY and rerun.")
-
-    print("\nDone.")
+    print("\nThe elbow usually sits between the 90th and 99th percentile. ")
 
 
 if __name__ == "__main__":

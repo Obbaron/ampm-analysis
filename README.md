@@ -1,4 +1,4 @@
-# ampm-analysis
+# ampm-analyzer
 
 Analysis pipeline for Renishaw 500S PBF-LB AMPM (post-process monitoring) data.
 
@@ -60,10 +60,11 @@ ampm-analyzer/
 │   └── sampling.py             # Random / stride / grid downsamplers
 ├── config.py                   # Paths and physical parameters
 ├── examples/                   # Runnable example scripts
-│   ├── cov.py                  # CoV analysis end-to-end
+│   ├── cov.py                  # CoV analysis with DBSCAN clustering
+│   ├── cov_direct.py           # CoV analysis with direct nearest-part assignment
 │   ├── view_layers.py          # Per-layer interactive viewer
 │   └── tune_eps.py             # DBSCAN tuning workflow
-├── tests/                      # 166 tests across 11 phases
+├── tests/                      # 173 tests across 11 phases
 ├── pyproject.toml              # Project metadata, dependencies, pytest config
 └── docs/                       # Detailed chapter docs
     ├── PIPELINE.md             # End-to-end flow
@@ -77,6 +78,7 @@ ampm-analyzer/
 ## Where to next?
 
 - **Just want to run something** → edit `config.py` paths, run `python examples/cov.py`
+- **Build has few, large, well-separated parts** (typical medical implants) → `python examples/cov_direct.py` is simpler and doesn't need clustering tuning
 - **Tuning DBSCAN for a new build** → run `python examples/tune_eps.py`, also see [docs/CLUSTERING.md](docs/CLUSTERING.md)
 - **Cache misbehaving / want to clear it** → [docs/CACHING.md](docs/CACHING.md)
 - **A part isn't being identified correctly** → [docs/PARTS.md](docs/PARTS.md)
@@ -98,18 +100,18 @@ Requires Python 3.11 or newer.
 To also install the test framework:
 
 ```bash
-pip install -e .[dev]
+pip install -e ".[dev]"
 ```
 
 ## Running tests
 
 ```bash
-pytest                          # All 166 tests, ~25 seconds
+pytest                          # All 173 tests, ~25 seconds
 pytest tests/test_phase8.py     # Just the parts module tests
 python tests/test_phase11.py    # Direct invocation also works
 ```
 
-(Requires `pip install -e .[dev]` to get pytest itself.)
+(Requires `pip install -e ".[dev]"` to get pytest itself.)
 
 ## Limitations
 

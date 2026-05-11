@@ -59,6 +59,8 @@ def main() -> None:
     )
     fig.show()
 
+    print("Done.")
+
 
 if __name__ == "__main__":
     main()

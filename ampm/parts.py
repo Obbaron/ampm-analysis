@@ -45,7 +45,7 @@ import csv
 import io
 from collections import Counter
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 import numpy as np
 import polars as pl
@@ -85,7 +85,6 @@ def _iter_sections(text: str) -> Iterator[tuple[str, int, list[list[str]]]]:
             j = data_start
             while j < len(rows):
                 r = rows[j]
-
                 if not r or all(cell == "" for cell in r):
                     break
                 data_rows.append(r)
@@ -145,11 +144,9 @@ def _try_numeric(s: pl.Series) -> pl.Series | None:
     """Return a numeric version of ``s`` if every non-empty value parses; else None."""
     if s.dtype != pl.String:
         return None  # already numeric or non-string
-
     cast = s.cast(pl.Float64, strict=False)
     original_non_empty = s.str.len_chars() > 0
     new_nulls = cast.is_null() & original_non_empty
-
     if new_nulls.any():
         return None
     if (
@@ -574,7 +571,6 @@ def join_parts_with_stats(
                 for pid in missing_ids:
                     print(f"  {pid}")
 
-        # Any parts in the parts table with no stats are silently dropped by the left join
         stats_part_set = set(left[stats_part_col].to_list())
         parts_part_set = set(right[stats_part_col].to_list())
         parts_only = parts_part_set - stats_part_set
@@ -583,6 +579,143 @@ def join_parts_with_stats(
                 f"[join_parts_with_stats] Note: "
                 f"{len(parts_only)} part(s) in parts_table had no stats "
                 f"and were not included: {sorted(parts_only)}"
+            )
+
+    return out
+
+
+def assign_nearest_part(
+    masked: pl.DataFrame,
+    parts_table: pl.DataFrame,
+    *,
+    x_col: str = "Demand X",
+    y_col: str = "Demand Y",
+    parts_id_col: str = "Part ID",
+    parts_x_col: str = "X Position",
+    parts_y_col: str = "Y Position",
+    part_id_col: str = "part_id",
+    max_distance_mm: float | None = None,
+    noise_label: str | None = "noise",
+    verbose: bool = True,
+) -> pl.DataFrame:
+    """
+    Assign every row in ``masked`` to its nearest part by XY position.
+
+    A simpler alternative to DBSCAN clustering + ``compute_part_id_map`` when
+    parts are well-separated (typical for builds with few, large parts).
+    Each row gets the Part ID of the closest part by 2D Euclidean distance
+    in the (x_col, y_col) plane. Z is ignored.
+
+    Memory note
+    -----------
+    Builds a distance matrix of shape (n_rows, n_parts) in NumPy. For 80M
+    rows and 6 parts this peaks at ~2 GB. For builds with 50+ parts the
+    matrix grows and a KDTree approach would be more efficient — but this
+    function is intentionally simple for the small-parts-count case it's
+    designed for.
+
+    Parameters
+    ----------
+    masked
+        Mask-filtered DataFrame; must contain ``x_col`` and ``y_col``.
+    parts_table
+        DataFrame with ``parts_id_col``, ``parts_x_col``, ``parts_y_col``.
+        Typically the output of ``QuantAMParts.parent_parts()``.
+    x_col, y_col
+        Spatial columns in ``masked``. Defaults match DataStore output.
+    parts_id_col, parts_x_col, parts_y_col
+        Column names in ``parts_table``. Defaults match parent_parts().
+    part_id_col
+        Name of the new column to add. Default ``"part_id"``.
+    max_distance_mm
+        Optional cap on assignment distance. Rows whose nearest part is
+        farther than this are assigned ``noise_label`` instead. ``None``
+        (the default) means assign every row regardless of distance —
+        appropriate when parts are large and well-separated. Set to a
+        sensible cap (e.g., 1.5× expected part radius) if you want to
+        flag rows that are unambiguously outside any part.
+    noise_label
+        What to assign to rows beyond ``max_distance_mm``. Default
+        ``"noise"`` matches the convention used by ``apply_part_id_map``.
+    verbose
+        Print per-part row counts and distance statistics.
+
+    Returns
+    -------
+    DataFrame with a new ``part_id_col`` (String dtype) added.
+
+    See also
+    --------
+    compute_part_id_map : Use when clustering has produced cluster IDs and
+        you want to label each cluster with a part. Use ``assign_nearest_part``
+        directly when clustering isn't appropriate (well-separated parts).
+    """
+    for c in (x_col, y_col):
+        if c not in masked.columns:
+            raise KeyError(f"Column {c!r} not in masked DataFrame")
+    for c in (parts_id_col, parts_x_col, parts_y_col):
+        if c not in parts_table.columns:
+            raise KeyError(f"Column {c!r} not in parts_table")
+    if parts_table.is_empty():
+        raise ValueError("parts_table is empty")
+
+    import numpy as np
+
+    n_parts = parts_table.height
+    part_ids = parts_table[parts_id_col].to_list()
+    px = parts_table[parts_x_col].to_numpy().astype(np.float32)
+    py = parts_table[parts_y_col].to_numpy().astype(np.float32)
+
+    x = masked[x_col].to_numpy()
+    y = masked[y_col].to_numpy()
+
+    dx = x[:, None] - px[None, :]
+    dy = y[:, None] - py[None, :]
+    dist2 = dx * dx + dy * dy
+    del dx, dy
+
+    nearest_idx = dist2.argmin(axis=1)
+    nearest_dist2 = np.take_along_axis(dist2, nearest_idx[:, None], axis=1).ravel()
+    del dist2
+    nearest_dist = np.sqrt(nearest_dist2)
+    del nearest_dist2
+
+    idx_to_id = {i: part_ids[i] for i in range(n_parts)}
+    assigned = np.array([idx_to_id[int(i)] for i in nearest_idx], dtype=object)
+
+    if max_distance_mm is not None:
+        too_far = nearest_dist > max_distance_mm
+        n_too_far = int(too_far.sum())
+        if n_too_far > 0:
+            assigned[too_far] = noise_label  # may be None
+            if verbose:
+                pct = n_too_far / len(assigned)
+                print(
+                    f"[assign_nearest_part] {n_too_far:,} row(s) "
+                    f"({pct:.1%}) farther than {max_distance_mm} mm from any "
+                    f"part → labelled {noise_label!r}"
+                )
+
+    out = masked.with_columns(pl.Series(part_id_col, assigned, dtype=pl.String))
+
+    if verbose:
+        print(
+            f"[assign_nearest_part] Assigned {len(assigned):,} rows to "
+            f"{n_parts} part(s):"
+        )
+        for i, pid in enumerate(part_ids):
+            mask = nearest_idx == i
+            if max_distance_mm is not None:
+                mask = mask & ~too_far
+            n = int(mask.sum())
+            if n == 0:
+                print(f"  {pid}: 0 rows assigned")
+                continue
+            d = nearest_dist[mask]
+            print(
+                f"  {pid}: {n:>9,} rows, "
+                f"distance mean={d.mean():.2f} mm, "
+                f"max={d.max():.2f} mm"
             )
 
     return out
