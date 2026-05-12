@@ -30,12 +30,12 @@ curve = k_distance_curve(df_masked, k=10, sample_size=50_000, mode="3d",
 # Plot 'Rank' vs 'k-distance (mm)'; eps_xy lives at the elbow.
 ```
 
-For the small builds, the elbow is ~0.3 mm, which matches the hatch spacing. Larger parts with sparser scan tracks need larger `eps_xy`.
 
 Common pitfalls:
 
 - **Too small** → clusters fragment (you get 50 clusters for 20 parts) and noise inflates
 - **Too large** → adjacent parts merge into one cluster
+- The right value is roughly **2-3× the hatch spacing**
 
 ## Tuning eps_z
 
@@ -51,7 +51,7 @@ Common values:
 
 `min_samples` is the density threshold. Each cluster must have at least one core point with this many neighbors within `eps`.
 
-- `min_samples = 10` — works as a generous starting point
+- `min_samples = 10` is a conservative starting point
 - For lower-density data (smaller parts, sparser hatches), reduce to 5
 - Above 20, you start losing edges of clusters as noise
 
@@ -59,9 +59,11 @@ Common values:
 
 The single-pass DBSCAN we'd love to run can't fit 80M points × 80M neighbor matrix in memory. Two options:
 
-**Option A: downsample-and-propagate.** Run DBSCAN on a representative sample (say 800k points), then assign every other point to its nearest sample's cluster via a BallTree. Fast but fragile — at low representative density, clusters fragment because the sample doesn't capture them all.
+**Option A: downsample-and-propagate.** Run DBSCAN on a representative sample (say 200k points), then assign every other point to its nearest sample's cluster via a BallTree. Fast but fragile; at low representative density, clusters fragment because the sample doesn't capture them all.
 
 **Option B: chunked DBSCAN.** Process overlapping layer ranges. Within a chunk, DBSCAN runs on the full data for that chunk. Overlapping rows in adjacent chunks get matched and labels are merged via union-find.
+
+We default to **Option B** because it's robust at full data density, but can be memory-heavy.
 
 ```python
 from ampm.clustering import cluster_dbscan_chunked
@@ -72,12 +74,12 @@ clustered = cluster_dbscan_chunked(
     min_samples=10,
     mode="3d",
     layers_per_chunk=11,        # smaller = lower memory, more chunks
-    overlap_layers=None,           # at least ceil(eps_z / layer_thickness)
+    overlap_layers=2,           # at least ceil(eps_z / layer_thickness)
     verbose=True,
 )
 ```
 
-Auto-overlap: pass `overlap_layers=None` to let the function pick `max(10, ceil(eps_z/layer_thickness)*2)`.
+Auto-overlap: pass `overlap_layers=None` to let the function pick `max(2, ceil(eps_z/layer_thickness)*2)`.
 
 ## Memory considerations
 
@@ -89,7 +91,7 @@ DBSCAN's memory peak is during the pairwise neighbor query within each chunk. Fo
 | 20               | ~5M            | ~6 GB             |
 | 50               | ~12M           | ~15 GB            |
 
-If your machine has 32 GB total and you're running everything else (Plotly, polars copies of the data), `layers_per_chunk=11-20` is still millions of data point and will hit your swap memory pretty hard. The downsampling method is more memory efficient but the clustering needs retuning for the now sparser data set.
+If your machine has 32 GB total and you're running everything else (Plotly, polars copies of the data), `layers_per_chunk=11-20` is the safe range. Below 11 you start spending more time on chunk boundaries than on the actual clustering.
 
 The chunked algorithm is parallelized via DBSCAN's `n_jobs=-1`, so all CPU cores are used. Expect ~99% CPU utilization throughout.
 
@@ -106,8 +108,8 @@ You want:
 
 - **Number of clusters** matching your known number of parts
 - **n_rows per cluster** roughly equal (within 2× of each other for parts of similar size)
-- **noise points** under 1% — higher means `min_samples` is too high or `eps` is too small
-- **z_min and z_max per cluster** spanning the full build height (3.0 to 12.99 mm for JR299)
+- **noise points** under 1%. Higher means `min_samples` is too high or `eps` is too small
+- **z_min and z_max per cluster** spanning the full build height
 
 If z_min/z_max for each cluster is just a few layers, `eps_z` is too small and DBSCAN is splitting parts vertically into slabs. Increase `eps_z` or `overlap_layers`.
 
@@ -135,7 +137,7 @@ Symptoms and fixes:
 | Took forever, single core | `n_jobs` not set | We always pass `n_jobs=-1`; check sklearn version |
 | Different cluster IDs each run | `stable_labels=False` | Set `stable_labels=True` (default) |
 
-## Reference: tested settings for JR299
+## Reference: tested settings for JR299 (chunked)
 
 ```python
 EPS_XY = 0.3

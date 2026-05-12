@@ -46,7 +46,6 @@ COV_PLOT_SIGNAL = (
 
 def main() -> None:
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
-    print(store)
 
     df = store.query()
     print(f"Full slice: {df.height:,} rows")

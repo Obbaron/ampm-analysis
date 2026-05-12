@@ -431,7 +431,7 @@ def cluster_dbscan_chunked(
         ~2 GB during DBSCAN with float32). Bump higher if you have RAM.
     overlap_layers
         Number of overlap layers shared with the next chunk. If None (default),
-        computed as ``max(10, ceil(eps_z / layer_thickness) * 2)``, ensuring
+        computed as ``max(2, ceil(eps_z / layer_thickness) * 2)``, ensuring
         every boundary point sees its full eps_z neighborhood in both chunks.
         Must be < layers_per_chunk; warned and clamped if too small.
     layer_thickness
@@ -456,7 +456,7 @@ def cluster_dbscan_chunked(
         return df.with_columns(pl.lit(-1, dtype=pl.Int32).alias("cluster"))
 
     if mode == "3d":
-        min_overlap = max(10, int(np.ceil(eps_z / layer_thickness) * 2))
+        min_overlap = max(2, int(np.ceil(eps_z / layer_thickness) * 2))
     else:
         min_overlap = 1
 
