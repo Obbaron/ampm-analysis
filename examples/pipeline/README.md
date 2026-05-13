@@ -33,7 +33,6 @@ flowchart LR
     S02b --> S03
     C3 --> S03
     S03 --> S04[04_visualize.py]
-    S04 --> P[3 interactive plots]
 ```
 
 Each `02*` and later script also reads the layer and mask caches (omitted from arrows above for clarity).
