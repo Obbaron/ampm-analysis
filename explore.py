@@ -31,7 +31,7 @@ from config import (
 
 MAX_DISTANCE_MM = None
 
-CORRECT_MELTPOOL = True
+CORRECT_MELTPOOL = False
 
 SIGNALS = [
     "MeltVIEW melt pool (mean)",

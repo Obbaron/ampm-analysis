@@ -57,6 +57,7 @@ def main() -> None:
         yaxis_title="Y (mm)",
         colorscale="Turbo",
     )
+    # fig.write_html(r"C:\Users\ohp460\Documents\Code\ampm-analysis\JR314_layers.html")
     fig.show()
 
     print("Done.")
