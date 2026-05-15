@@ -1,6 +1,6 @@
 """
-explore.py — full pipeline: load, mask, assign each row to its nearest
-part, optionally correct melt-pool signal, analyze process stability via
+explore.py: load, mask, assign each row to its nearest part,
+optionally correct melt-pool signal, analyze process stability via
 CoV, and visualize chosen data columns.
 """
 
@@ -93,7 +93,7 @@ def main() -> None:
     del df_masked
 
     if CORRECT_MELTPOOL:
-        print("\nApplying MAIN-machine MeltVIEW XY-bias correction...")
+        print("\nApplying MAIN machine meltpool XY-bias correction...")
         correction = MeltPoolCorrection()
         clustered = correction.apply(clustered)
         print(f"  added column: {COV_PLOT_SIGNAL!r}")
