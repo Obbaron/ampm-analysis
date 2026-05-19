@@ -6,7 +6,7 @@ import polars as pl
 FILEPATH = (
     r"C:\Users\ohp460\Documents\Code\ampm-analysis\etc\Archimedes Density TiAg.xlsx"
 )
-SHEET_NAME = "Ti-Sterling"
+SHEET_NAME = "Ti-6Ag"
 
 df = pl.read_excel(FILEPATH, sheet_name=SHEET_NAME, engine="calamine")
 
