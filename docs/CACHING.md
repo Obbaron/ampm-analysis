@@ -16,7 +16,7 @@ Each is independent. Invalidating one doesn't force a rebuild of the others.
 
 Built once per source file by `DataStore`. Each `Packet data for layer N, laser 4.txt` becomes a `layer=NNNNN.parquet` file. Total size is roughly **half the source `.txt` size** thanks to numeric column compression.
 
-Invalidation: per-file, by source `.txt` mtime. If you rerun `cov.py` after editing one source file, only that file's Parquet rebuilds. The rest are unchanged.
+Invalidation: per-file, by source `.txt` mtime. If you rerun an analysis script after editing one source file, only that file's Parquet rebuilds. The rest are unchanged.
 
 Force a full rebuild:
 

@@ -1,7 +1,7 @@
 """
 Persistence for cluster labels so expensive clustering runs aren't wasted.
 
-The cache stores three columns — ``(layer, Start time, cluster)`` — alongside
+The cache stores three columns: ``(layer, Start time, cluster)``, alongside
 JSON-serializable parameter metadata. On load, we look up each row in the
 fresh DataFrame by ``(layer, Start time)`` and merge in the cluster label.
 
@@ -145,7 +145,7 @@ def load_cluster_labels(
         Path to a cache previously written by ``save_cluster_labels``.
     expect_params
         If given, the cache's stored params dict must match this exactly.
-        Behavior on mismatch is controlled by ``strict``.
+        Behavior on mismatch is determined by ``strict``.
     strict
         If True (default), raise on any mismatch (version, params, missing
         file). If False, mismatches print a warning and the function raises
@@ -166,9 +166,9 @@ def load_cluster_labels(
             print(f"  [cache] {msg}")
         raise FileNotFoundError(msg)
 
-    for c in _KEY_COLUMNS:
-        if c not in df.columns:
-            raise KeyError(f"Column {c!r} required to load cluster cache.")
+    for column in _KEY_COLUMNS:
+        if column not in df.columns:
+            raise KeyError(f"Column {column!r} required to load cluster cache.")
 
     pf = pq.ParquetFile(cache_path)
     raw_meta = pf.schema_arrow.metadata or {}

@@ -133,14 +133,15 @@ See [PLOTTING.md](PLOTTING.md) for parameters, file size implications, and which
 
 ## Where this all comes together
 
-`cov.py` runs stages 1–8 with the JR299 settings as a reference:
+The pipeline scripts in `examples/pipeline/` run stages 1–8 as separate steps:
 
 ```bash
-python examples/cov.py
+python examples/pipeline/01_load_and_mask.py /path/to/build_directory
+python examples/pipeline/02a_assign_parts_direct.py /path/to/build_directory
+python examples/pipeline/03_compute_cov.py /path/to/build_directory
+python examples/pipeline/04_visualize.py /path/to/build_directory
 ```
 
-Produces three plots: a 3D scatter colored by per-part CoV, a parametric process map (CoV vs Hatches Power × Hatch Speed), and a KDE comparison of the most-stable and least-stable parts.
+04 produces three plots: a 3D scatter colored by per-part CoV, a parametric process map (CoV vs Hatches Power × Hatch Speed), and a KDE comparison of the most-stable and least-stable parts.
 
-`explore.py` is the same pipeline with all the extra prints, mode comparisons, and intermediate plots — useful for development and tuning. Treat `cov.py` as the polished version, `explore.py` as the working scratch.
-
-`view_layers.py` is a separate single-purpose tool for scrubbing through layers visually. It loads the mask cache directly without re-clustering, so it's fast to start.
+The end-to-end scripts in `examples/` (`parametric.py`, `view_3d.py`, `view_layers.py`) combine the same stages into single files. `explore.py` at the project root is the working scratch with extra prints and intermediate plots — useful for development and tuning.

@@ -104,14 +104,14 @@ clustered = assign_nearest_part(
 )
 ```
 
-The output is the same `part_id` String column that `apply_part_id_map` would produce, so all downstream functions (`compute_cov`, `join_parts_with_stats`, the plotters) work unchanged. See `examples/cov_direct.py` for a full pipeline using this approach.
+The output is the same `part_id` String column that `apply_part_id_map` would produce, so all downstream functions (`compute_cov`, `join_parts_with_stats`, the plotters) work unchanged. See `examples/pipeline/02a_assign_parts_direct.py` for a full pipeline using this approach.
 
 **When to use which:**
 
 | Situation | Use |
 |-----------|-----|
-| Parametric DOE with many small parts (5-10 mm), closely spaced | DBSCAN (`cov.py`) |
-| Few large parts (>30 mm) on a big build plate | direct (`cov_direct.py`) |
+| Parametric DOE with many small parts (5-10 mm), closely spaced | DBSCAN (`02b_assign_parts_dbscan.py`) |
+| Few large parts (>30 mm) on a big build plate | direct (`02a_assign_parts_direct.py`) |
 | Single-part builds | direct |
 | Lattice or grid layouts with parts <5 mm apart | DBSCAN |
 | You want noise rejection on inter-part rapids | DBSCAN (or direct + `max_distance_mm`) |
