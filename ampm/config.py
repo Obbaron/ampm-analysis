@@ -3,11 +3,11 @@ config.py - shared configuration for ampm analysis
 
 Usage:
     from config import load_config
-    config = load_config("path/to/build_directory")
+    config = load_config("path/to/project_root")
 
     Or, to auto-generate config.toml if it doesn't exist:
     from config import create_or_load_config
-    config = create_or_load_config("path/to/build_directory")
+    config = create_or_load_config("path/to/project_root")
 
     The project root should contain a `config.toml` file.
     Paths in the TOML can be relative or absolute.

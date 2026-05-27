@@ -1,29 +1,47 @@
-# ampm-analyzer
+# AMPM Analysis
 
 Analysis pipeline for Renishaw 500S PBF-LB AMPM (post-process monitoring) data.
 
-Each Renishaw 500S build produces hundreds of layers, each containing ~250,000 monitoring rows recording per-pulse melt-pool intensity, plasma signal, laser back-reflection, and laser power along with the demanded XY position. A full build is ~80M rows. This package loads that data, masks it to the printed parts, clusters the points back into individual physical parts, links each cluster to the part metadata exported from QuantAM, and produces a coefficient-of-variation analysis plus interactive 3D and parametric plots.
+Each Renishaw 500S build produces hundreds of layers, each containing ~250,000 monitoring rows recording meltpool intensity, plasma intensity, laser back-reflection, and laser power along with the demanded XY position. A full build is ~80M rows. This package loads that data, masks it to the printed parts, assigns points to individual physical parts (via direct nearest-part or DBSCAN clustering), and produces coefficient-of-variation analysis plus interactive plots.
 
 ## Quickstart
 
+### GUI (recommended)
+
 ```bash
-# Install (from the project root)
-pip install -e .
+# Clone the repo and run the setup script
+# Windows:
+setup.bat
+# Linux/macOS:
+chmod +x setup.sh && ./setup.sh
 
-# Edit config.py at the project root with paths to your build
-# (the SOURCE directory containing 'Packet data for layer N, laser 4.txt' files,
-# the STL of the parts, and the QuantAM parts CSV)
+# Activate the virtual environment
+# Windows:
+.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
 
-# Run the example coefficient-of-variation analysis
-python examples/cov.py
-
-# Or open the per-layer interactive viewer
-python examples/view_layers.py
+# Launch the app
+python app.py
 ```
 
-The first run takes several minutes — the script converts every source `.txt` file to a per-layer Parquet cache, computes the STL-based mask, and runs DBSCAN. Subsequent runs are seconds because everything is cached on disk.
+Select a project root directory, review the auto-detected configuration, load data, add derived columns, and plot.
 
-See the [Installation](#installation) section below for more options.
+### Compiled executable (no Python required)
+
+Download the latest release from the [Releases](https://github.com/Obbaron/ampm-analysis/releases) page. Unzip the folder and double-click `ampm-analysis.exe`.
+
+### CLI / scripts
+
+```bash
+pip install -e .
+
+# Run an example script with a project root directory
+python examples/parametric.py /path/to/root_directory
+python examples/view_layers.py /path/to/root_directory
+```
+
+The first run takes several minutes as the script converts every source `.txt` packet file to a per-layer Parquet cache, computes the STL-based mask, and runs assignment. Subsequent runs are then faster because everything is cached on disk.
 
 ## Pipeline overview
 
@@ -32,70 +50,79 @@ flowchart LR
     A[Source .txt files] --> B[DataStore<br/>per-layer Parquet cache]
     B --> C[apply_mask<br/>STL → polygons]
     C --> D[Mask cache<br/>.cache/mask_keep.pq]
-    D --> E[cluster_dbscan_chunked<br/>DBSCAN with Z-scaling]
-    E --> F[Cluster cache<br/>.cache/cluster_labels.pq]
+    D --> E[Part assignment<br/>direct or DBSCAN]
+    E --> F[Assignment cache<br/>.cache/cluster_labels.pq]
     F --> G[compute_part_id_map<br/>match centroids to parts CSV]
     G --> H[compute_cov<br/>per-part stats]
-    H --> I[Plots:<br/>3D scatter, contour map,<br/>distributions]
+    H --> I[Views:<br/>3D scatter, contour,<br/>KDE, bar, etc.]
 ```
 
 Each stage is independent and cacheable. If you change clustering parameters but not the mask, only the cluster cache invalidates.
 
-See [docs/PIPELINE.md](docs/PIPELINE.md) for the full step-by-step.
+See [docs/PIPELINE.md](docs/PIPELINE.md) for the full step-by-step of how to build a script.
 
 ## Project layout
 
 ```
-ampm-analyzer/
+ampm-analysis/
+├── app.py                      # GUI entry point (PyQt6)
+├── pyproject.toml              # Project dependencies
+├── setup.bat                   # Windows setup script
+├── setup.sh                    # Linux/macOS setup script
+├── assets/
+│   ├── ampm.ico                # App icon (Windows)
+│   └── ampm.icns               # App icon (macOS)
 ├── ampm/                       # The package
-│   ├── datastore.py            # Source → per-layer Parquet cache
-│   ├── masking.py              # STL → per-layer 2D polygon masks
-│   ├── mask_cache.py           # Persistence for the masked-rows result
-│   ├── clustering.py           # DBSCAN (sampled + chunked variants)
+│   ├── config.py               # Reads config.toml
+│   ├── setup_build.py          # Autodetects files
+│   ├── datastore.py            # Creates Parquet cache
+│   ├── masking.py              # Per-layer polygon masks
+│   ├── mask_cache.py           # Persistence for masked rows
+│   ├── clustering.py           # DBSCAN
 │   ├── cluster_cache.py        # Persistence for cluster labels
-│   ├── parts.py                # QuantAM CSV parser + cluster→part-ID
-│   ├── stats.py                # Coefficient of variation
+│   ├── parts.py                # QuantAM CSV parser
+│   ├── stats.py                # CoV
 │   ├── correction.py           # XY-bias correction polynomial
-│   ├── plotting.py             # All Plotly figure builders
-│   └── sampling.py             # Random / stride / grid downsamplers
-├── config.py                   # Paths and physical parameters
+│   ├── sampling.py             # Downsamplers
+│   └── views/                  # Discoverable plot types
+│       ├── __init__.py         # discover() auto-loader
+│       ├── bar.py
+│       ├── contour.py
+│       ├── cov_summary.py
+│       ├── k_distance.py
+│       ├── kde.py
+│       ├── layer_viewer.py
+│       ├── scatter_2d.py
+│       └── scatter_3d.py
 ├── examples/                   # Runnable example scripts
-│   ├── cov.py                  # CoV analysis with DBSCAN clustering
-│   ├── cov_direct.py           # CoV analysis with direct nearest-part assignment
-│   ├── view_layers.py          # Per-layer interactive viewer
-│   └── tune_eps.py             # DBSCAN tuning workflow
-├── tests/                      # 173 tests across 11 phases
-├── pyproject.toml              # Project metadata, dependencies, pytest config
-└── docs/                       # Detailed chapter docs
-    ├── PIPELINE.md             # End-to-end flow
-    ├── CLUSTERING.md           # DBSCAN tuning + memory
-    ├── CACHING.md              # Cache files + invalidation
-    ├── PARTS.md                # QuantAM CSV + part assignment
-    ├── PLOTTING.md             # Plot functions + file size
-    └── CORRECTION.md           # XY-bias correction
+├── tests/                      # Test suite
+└── docs/                       # Documentation
 ```
+
+## Configuration
+
+Each project root directory contains a `config.toml` with paths and parameters. On first use, `setup_build.py` auto-detects the STL, parts CSV, and layer thickness, and writes a default config. You can edit it manually or review it in the GUI before loading.
+
+See the project root's `config.toml` for all available options.
 
 ## Where to next?
 
-- **Just want to run something** → edit `config.py` paths, run `python examples/cov.py`
-- **Build has few, large, well-separated parts** (typical medical implants) → `python examples/cov_direct.py` is simpler and doesn't need clustering tuning
+- **Just want to see results** → download the compiled `.exe` from Releases
+- **Setting up environment** → run `setup.bat` / `setup.sh`, then `python app.py`
+- **Build has few, large, well-separated parts** → use `direct` assignment method in config
 - **Tuning DBSCAN for a new build** → run `python examples/tune_eps.py`, also see [docs/CLUSTERING.md](docs/CLUSTERING.md)
 - **Cache misbehaving / want to clear it** → [docs/CACHING.md](docs/CACHING.md)
 - **A part isn't being identified correctly** → [docs/PARTS.md](docs/PARTS.md)
-- **Want to add a new plot** → [docs/PLOTTING.md](docs/PLOTTING.md)
-- **Different machine or sensor than the MAIN MeltVIEW** → [docs/CORRECTION.md](docs/CORRECTION.md)
+- **Want to add a new view** → create a new `.py` file in `ampm/views/` following the contract (NAME, AXES, SETTINGS, run)
+- **Different machine or sensor** → [docs/CORRECTION.md](docs/CORRECTION.md)
 
 ## Installation
 
-The package is installable in editable mode from the project root:
+### Online (with internet access)
 
 ```bash
 pip install -e .
 ```
-
-That installs `ampm` plus all required dependencies (polars, plotly, scikit-learn, scipy, trimesh, shapely, etc.). Editable mode means edits to the source tree are picked up immediately — useful while developing.
-
-Requires Python 3.11 or newer.
 
 To also install the test framework:
 
@@ -103,18 +130,28 @@ To also install the test framework:
 pip install -e ".[dev]"
 ```
 
+### Offline (no internet)
+
+If a `wheels/windows/` or `wheels/linux/` folder is present, the setup scripts install from those automatically. Otherwise, to create the wheels on a machine with internet:
+
+```bash
+pip download . -d wheels/windows/   # run on Windows
+pip download . -d wheels/linux/     # run on Linux
+```
+
+Requires Python 3.11 or newer.
+
 ## Running tests
 
 ```bash
-pytest                          # All 173 tests, ~25 seconds
-pytest tests/test_phase8.py     # Just the parts module tests
-python tests/test_phase11.py    # Direct invocation also works
+pytest                          # Full suite
+pytest tests/test_phase8.py     # Single module
 ```
 
-(Requires `pip install -e ".[dev]"` to get pytest itself.)
+Requires `pip install -e ".[dev]"` to get pytest.
 
 ## Limitations
 
-- The default polynomial in `correction.py` is calibrated for the **MAIN machine's MeltVIEW melt pool (mean) signal only**. Pass your own `power_matrix` and `coefficients` for other sensors or machines (RBV, etc.).
-- DBSCAN tuning is build-dependent. The defaults in `cov.py` are validated for the JR299 Sterling parametric build (20 parts, 5 mm minimum spacing). For different geometries you may need to retune `EPS_XY` — see [docs/CLUSTERING.md](docs/CLUSTERING.md).
-- Windows paths containing `[` or `]` characters require explicit handling because Polars treats them as glob metacharacters. The package handles this everywhere internally; just be aware if you're writing new code that touches Parquet paths.
+- The default polynomial in `correction.py` is calibrated for the **MAIN machine's MeltVIEW melt pool (mean) signal only**. Pass your own `power_matrix` and `coefficients` for other sensors or machines.
+- DBSCAN tuning is build-dependent. The defaults are validated for the JR299 Sterling parametric build (20 parts, 5 mm minimum spacing). For different geometries you may need to retune `EPS_XY` — see [docs/CLUSTERING.md](docs/CLUSTERING.md).
+- Windows paths containing `[` or `]` characters require explicit handling because Polars treats them as glob metacharacters. The package handles this internally.

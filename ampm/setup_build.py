@@ -7,7 +7,7 @@ can be overridden explicitly if auto-detection picks the wrong file.
 
 Usage from other scripts:
     from setup_build import create_config
-    create_config("/path/to/build_directory")
+    create_config("/path/to/project_root")
 """
 
 from __future__ import annotations

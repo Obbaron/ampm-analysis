@@ -11,7 +11,7 @@ Each project root directory needs a `config.toml` that tells the pipeline where 
 Point any script at a project root directory:
 
 ```bash
-python examples/pipeline/01_load_and_mask.py /path/to/build_directory
+python examples/pipeline/01_load_and_mask.py /path/to/project_root
 ```
 
 If no `config.toml` exists, the script auto-detects the source packet data directory, the STL (prioritizing files closer to the root with "fullplate" in the name), and the QuantAM parts CSV (identified by its header). Layer thickness is read from the parts CSV automatically.
@@ -172,7 +172,11 @@ joined = join_parts_with_stats(cov_overall, parts_with_speed)
 
 ## Stage 8: Visualization
 
-All plotters live in `ampm.plotting`:
+There are two ways to visualize results:
+
+**GUI (recommended):** Launch `python app.py`, load a project root directory, and use the views system. Each view (3D scatter, 2D scatter, contour, KDE, bar, etc.) is a discoverable module in `ampm/views/` with its own axes, settings, and plot logic. The GUI handles column selection, derived columns, and plotting in a background thread. There are also compiled binaries on the Releases page.
+
+**Scripts:** The lower-level plotters in `ampm.plotting` can be called directly from any script:
 
 - `scatter3d`: 3D point cloud, colored by any column
 - `scatter2d`: top-down 2D view with optional equal aspect
@@ -185,13 +189,15 @@ See [PLOTTING.md](PLOTTING.md) for parameters, file size implications, and which
 
 ## Where this all comes together
 
-The pipeline scripts in `examples/pipeline/` run stages 1–8 as separate steps:
+**GUI:** `python app.py` runs all stages behind a single "Load Data" button. Select a project directory, review the auto-detected config, load and mask the data, add derived columns (CoV), and plot — all from the interface. The compiled executable (`ampm-analysis.exe`) bundles everything Python is not required.
+
+**Pipeline scripts:** The scripts in `examples/pipeline/` run stages 1–8 as separate steps:
 
 ```bash
-python examples/pipeline/01_load_and_mask.py /path/to/build_directory
-python examples/pipeline/02a_assign_parts_direct.py /path/to/build_directory
-python examples/pipeline/03_compute_cov.py /path/to/build_directory
-python examples/pipeline/04_visualize.py /path/to/build_directory
+python examples/pipeline/01_load_and_mask.py /path/to/project_root
+python examples/pipeline/02a_assign_parts_direct.py /path/to/project_root
+python examples/pipeline/03_compute_cov.py /path/to/project_root
+python examples/pipeline/04_visualize.py /path/to/bproject_root
 ```
 
 04 produces three plots: a 3D scatter colored by per-part CoV, a parametric process map (CoV vs Hatches Power × Hatch Speed), and a KDE comparison of the most-stable and least-stable parts.
