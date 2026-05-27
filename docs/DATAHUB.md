@@ -22,7 +22,7 @@ Then, create a folder in `D:\PROCESSED_DATA_ONLY_JRef_plus_date\` with the job r
 
 ![Step 2b](images/02b_populate.png)
 
-The other fields should populate themselves, but if they don't you can just set them manually. Note, DataHUB _requires_ a description of some kind to proceed.
+The other fields should populate themselves, but if they don't you can just set them manually. Note, DataHUB _requires_ a description of some kind to proceed. Click  **Configure** once set.
 
 ---
 
