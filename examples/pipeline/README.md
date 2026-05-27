@@ -6,14 +6,14 @@ For the conceptual reference on each stage (algorithm choices, tuning tradeoffs,
 
 ## TL;DR
 
-Place a `config.toml` in your build directory (see [config.toml](../../config.toml) for the format), then run:
-
 ```bash
 python examples/pipeline/01_load_and_mask.py /path/to/build_directory
 python examples/pipeline/02a_assign_parts_direct.py /path/to/build_directory  # OR 02b
 python examples/pipeline/03_compute_cov.py /path/to/build_directory
 python examples/pipeline/04_visualize.py /path/to/build_directory
 ```
+
+On first run, the script auto-detects the source data, STL, and parts CSV, writes a `config.toml` into the build directory, then proceeds. Subsequent runs reuse the existing `config.toml`. See [docs/PIPELINE.md](../../docs/PIPELINE.md) for details on configuration, including how to use overrides from an IDE.
 
 The first run takes minutes (builds caches). Subsequent runs are seconds.
 

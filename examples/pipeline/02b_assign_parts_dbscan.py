@@ -42,19 +42,13 @@ from ampm.clustering import cluster_dbscan_chunked, cluster_summary
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, apply_part_id_map, compute_part_id_map
-from ampm.config import load_config
-
-EPS_XY = 0.3  # in-plane neighbor radius (mm); run tune_eps.py to find this
-EPS_Z = 0.06  # through-thickness radius (mm); typically 2 * LAYER_THICKNESS
-MIN_SAMPLES = 10  # min neighbors for DBSCAN density threshold
-LAYERS_PER_CHUNK = 11  # smaller = lower peak memory, more chunks
-OVERLAP_LAYERS = 2  # at least ceil(EPS_Z / LAYER_THICKNESS)
+from ampm.config import create_or_load_config
 
 
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python 02b_assign_parts_dbscan.py <build_directory>")
-    config = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
     SOURCE = config["SOURCE"]
     STL = config["STL"]
@@ -63,6 +57,11 @@ def main() -> None:
     MASK_CACHE = config["MASK_CACHE"]
     MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
     CLUSTER_CACHE = config["CLUSTER_CACHE"]
+    EPS_XY = config["EPS_XY"]
+    EPS_Z = config["EPS_Z"]
+    MIN_SAMPLES = config["MIN_SAMPLES"]
+    LAYERS_PER_CHUNK = config["LAYERS_PER_CHUNK"]
+    OVERLAP_LAYERS = config["OVERLAP_LAYERS"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 

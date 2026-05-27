@@ -29,10 +29,8 @@ from ampm.parts import (
 from ampm.plotting import contour, kde, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from ampm.config import load_config
+from ampm.config import create_or_load_config
 
-MAX_DISTANCE_MM = None
-SIGNAL = "MeltVIEW melt pool (mean)"
 TARGET_POINTS_3D = 80_000
 N_BEST_WORST = 3
 
@@ -40,14 +38,16 @@ N_BEST_WORST = 3
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python parametric.py <build_directory>")
-    cfg = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
-    SOURCE = cfg["SOURCE"]
-    STL = cfg["STL"]
-    PARTS_CSV = cfg["PARTS_CSV"]
-    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
-    MASK_CACHE = cfg["MASK_CACHE"]
-    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    PARTS_CSV = config["PARTS_CSV"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
+    SIGNAL = config["SIGNALS"][0]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 

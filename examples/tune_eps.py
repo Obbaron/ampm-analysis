@@ -55,9 +55,8 @@ from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, compute_part_id_map
 from ampm.plotting import scatter2d
-from ampm.config import load_config
+from ampm.config import create_or_load_config
 
-EPS_XY = 0.65
 K = 10
 MODE = "3d"
 SAMPLE_SIZE = 1000000
@@ -66,16 +65,15 @@ SAMPLE_SIZE = 1000000
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python tune_eps.py <build_directory>")
-    cfg = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
-    SOURCE = cfg["SOURCE"]
-    STL = cfg["STL"]
-    PARTS_CSV = cfg["PARTS_CSV"]
-    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
-    MASK_CACHE = cfg["MASK_CACHE"]
-    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
-
-    EPS_Z = 2 * LAYER_THICKNESS
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    EPS_XY = config["EPS_XY"]
+    EPS_Z = config["EPS_Z"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
     print(store)

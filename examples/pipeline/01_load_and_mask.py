@@ -29,13 +29,13 @@ import polars as pl
 from ampm import DataStore
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
-from ampm.config import load_config
+from ampm.config import create_or_load_config
 
 
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python 01_load_and_mask.py <build_directory>")
-    config = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
     SOURCE = config["SOURCE"]
     STL = config["STL"]

@@ -24,9 +24,8 @@ from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, assign_nearest_part
 from ampm.sampling import prepare_for_plot
-from ampm.config import load_config
+from ampm.config import create_or_load_config
 
-MAX_DISTANCE_MM = None
 TARGET_POINTS = 50_000
 POINT_SIZE = 2
 
@@ -43,14 +42,15 @@ COLORSCALE = "Turbo"
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python view_3d.py <build_directory>")
-    cfg = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
-    SOURCE = cfg["SOURCE"]
-    STL = cfg["STL"]
-    PARTS_CSV = cfg["PARTS_CSV"]
-    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
-    MASK_CACHE = cfg["MASK_CACHE"]
-    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
+    SOURCE = config["SOURCE"]
+    STL = config["STL"]
+    PARTS_CSV = config["PARTS_CSV"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_CACHE = config["MASK_CACHE"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 

@@ -52,28 +52,13 @@ from ampm.parts import (
     join_parts_with_stats,
 )
 from ampm.stats import compute_cov
-from ampm.config import load_config
-
-USE_DIRECT_ASSIGNMENT = True  # False = use DBSCAN clustering
-MAX_DISTANCE_MM = None  # only used when USE_DIRECT_ASSIGNMENT = True
-
-# DBSCAN parameters only used when USE_DIRECT_ASSIGNMENT = False
-EPS_XY = 0.3
-EPS_Z = 0.06
-MIN_SAMPLES = 10
-LAYERS_PER_CHUNK = 11
-OVERLAP_LAYERS = None
-
-SIGNALS = [
-    "MeltVIEW melt pool (mean)",
-    "Laser output power (mean)",
-]
+from ampm.config import create_or_load_config
 
 
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python 03_compute_cov.py <build_directory>")
-    config = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
     SOURCE = config["SOURCE"]
     STL = config["STL"]
@@ -82,6 +67,16 @@ def main() -> None:
     MASK_CACHE = config["MASK_CACHE"]
     MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
     CLUSTER_CACHE = config["CLUSTER_CACHE"]
+    METHOD = config["METHOD"]
+    MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
+    EPS_XY = config["EPS_XY"]
+    EPS_Z = config["EPS_Z"]
+    MIN_SAMPLES = config["MIN_SAMPLES"]
+    LAYERS_PER_CHUNK = config["LAYERS_PER_CHUNK"]
+    OVERLAP_LAYERS = config["OVERLAP_LAYERS"]
+    SIGNALS = config["SIGNALS"]
+
+    USE_DIRECT_ASSIGNMENT = METHOD == "direct"
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 

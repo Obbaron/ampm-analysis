@@ -8,8 +8,10 @@ import sys
 from pathlib import Path
 
 import polars as pl
+from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from ampm import DataStore
+from ampm.config import create_or_load_config
 from ampm.correction import MeltPoolCorrection
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
@@ -21,27 +23,19 @@ from ampm.parts import (
 from ampm.plotting import bar, contour, kde, scatter2d, scatter2d_layered, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from ampm.config import load_config
-
-MAX_DISTANCE_MM = None
 
 CORRECT_MELTPOOL = False
 
-SIGNALS = [
-    "MeltVIEW melt pool (mean)",
-    "Laser output power (mean)",
-]
-COV_PLOT_SIGNAL = (
-    "MeltVIEW melt pool (mean) corrected"
-    if CORRECT_MELTPOOL
-    else "MeltVIEW melt pool (mean)"
-)
-
 
 def main() -> None:
-    if len(sys.argv) < 2:
-        sys.exit("Usage: python explore.py <build_directory>")
-    config = load_config(sys.argv[1])
+    if len(sys.argv) >= 2:
+        build_dir = sys.argv[1]
+    else:
+        QApplication(sys.argv)
+        build_dir = QFileDialog.getExistingDirectory(None, "Select Build Directory")
+        if not build_dir:
+            sys.exit("No directory selected.")
+    config = create_or_load_config(build_dir)
 
     SOURCE = config["SOURCE"]
     STL = config["STL"]
@@ -49,6 +43,11 @@ def main() -> None:
     LAYER_THICKNESS = config["LAYER_THICKNESS"]
     MASK_CACHE = config["MASK_CACHE"]
     MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
+    SIGNALS = config["SIGNALS"]
+    COV_PLOT_SIGNAL = (
+        "MeltVIEW melt pool (mean) corrected" if CORRECT_MELTPOOL else SIGNALS[0]
+    )
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 

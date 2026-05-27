@@ -5,7 +5,7 @@ Usage:
     from config import load_config
     config = load_config("path/to/build_directory")
 
-    Or to auto-generate config.toml if it doesn't exist:
+    Or, to auto-generate config.toml if it doesn't exist:
     from config import create_or_load_config
     config = create_or_load_config("path/to/build_directory")
 
@@ -49,8 +49,8 @@ def load_config(build_dir: str | Path) -> dict:
 
     Returns
     -------
-    dict with keys: SOURCE, STL, PARTS_CSV, LAYER_THICKNESS,
-                    MASK_CACHE, MASK_KEEP_CACHE, CLUSTER_CACHE
+    dict with keys for paths, build parameters, assignment method,
+    clustering parameters, signal columns, and derived cache paths.
     """
     build_dir = Path(build_dir).resolve()
     toml_path = build_dir / "config.toml"
@@ -63,6 +63,7 @@ def load_config(build_dir: str | Path) -> dict:
     except tomllib.TOMLDecodeError as e:
         sys.exit(f"ERROR: {toml_path} has invalid syntax:\n{e}")
 
+    # --- Required: paths and build ---
     try:
         source = _resolve_path(_config["paths"]["source"], build_dir)
         stl = _resolve_path(_config["paths"]["stl"], build_dir)
@@ -70,6 +71,30 @@ def load_config(build_dir: str | Path) -> dict:
         layer_thickness = _config["build"]["layer_thickness"]
     except KeyError as e:
         sys.exit(f"ERROR: Missing required key in {toml_path}: {e}")
+
+    # --- Optional: assignment (defaults to direct, no distance cap) ---
+    assignment = _config.get("assignment", {})
+    method = assignment.get("method", "direct")
+    max_distance_mm = assignment.get("max_distance_mm", "none")
+    if isinstance(max_distance_mm, str) and max_distance_mm.lower() == "none":
+        max_distance_mm = None
+
+    # --- Optional: clustering (sensible defaults) ---
+    clustering = _config.get("clustering", {})
+    eps_xy = clustering.get("eps_xy", 0.3)
+    eps_z = clustering.get("eps_z", 0.06)
+    min_samples = clustering.get("min_samples", 10)
+    layers_per_chunk = clustering.get("layers_per_chunk", 11)
+    overlap_layers = clustering.get("overlap_layers", "auto")
+    if isinstance(overlap_layers, str) and overlap_layers.lower() == "auto":
+        overlap_layers = None
+
+    # --- Optional: signals ---
+    signals_section = _config.get("signals", {})
+    signals = signals_section.get("columns", [
+        "MeltVIEW melt pool (mean)",
+        "Laser output power (mean)",
+    ])
 
     return {
         "SOURCE": source,
@@ -79,6 +104,14 @@ def load_config(build_dir: str | Path) -> dict:
         "MASK_CACHE": str(Path(source) / ".cache" / "fullplate_mask.pkl"),
         "MASK_KEEP_CACHE": str(Path(source) / ".cache" / "mask_keep.pq"),
         "CLUSTER_CACHE": str(Path(source) / ".cache" / "cluster_labels.pq"),
+        "METHOD": method,
+        "MAX_DISTANCE_MM": max_distance_mm,
+        "EPS_XY": eps_xy,
+        "EPS_Z": eps_z,
+        "MIN_SAMPLES": min_samples,
+        "LAYERS_PER_CHUNK": layers_per_chunk,
+        "OVERLAP_LAYERS": overlap_layers,
+        "SIGNALS": signals,
     }
 
 
@@ -106,8 +139,8 @@ def create_or_load_config(
 
     Returns
     -------
-    dict with keys: SOURCE, STL, PARTS_CSV, LAYER_THICKNESS,
-                    MASK_CACHE, MASK_KEEP_CACHE, CLUSTER_CACHE
+    dict with keys for paths, build parameters, assignment method,
+    clustering parameters, signal columns, and derived cache paths.
     """
     build_dir = Path(build_dir).resolve()
     toml_path = build_dir / "config.toml"

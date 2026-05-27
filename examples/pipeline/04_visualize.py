@@ -35,20 +35,7 @@ from ampm.parts import (
 from ampm.plotting import contour, kde, scatter3d
 from ampm.sampling import prepare_for_plot
 from ampm.stats import compute_cov
-from ampm.config import load_config
-
-USE_DIRECT_ASSIGNMENT = True
-MAX_DISTANCE_MM = None  # direct-assignment
-
-# DBSCAN parameters
-EPS_XY = 0.3
-EPS_Z = 0.06
-MIN_SAMPLES = 10
-LAYERS_PER_CHUNK = 11
-OVERLAP_LAYERS = None
-
-SIGNAL = "MeltVIEW melt pool (mean)"
-SIGNALS_FOR_COV = [SIGNAL, "Laser output power (mean)"]
+from ampm.config import create_or_load_config
 
 TARGET_POINTS_3D = 80_000  # 3D plots downsample to this many points
 
@@ -56,7 +43,7 @@ TARGET_POINTS_3D = 80_000  # 3D plots downsample to this many points
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python 04_visualize.py <build_directory>")
-    config = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
     SOURCE = config["SOURCE"]
     STL = config["STL"]
@@ -65,6 +52,17 @@ def main() -> None:
     MASK_CACHE = config["MASK_CACHE"]
     MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
     CLUSTER_CACHE = config["CLUSTER_CACHE"]
+    METHOD = config["METHOD"]
+    MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
+    EPS_XY = config["EPS_XY"]
+    EPS_Z = config["EPS_Z"]
+    MIN_SAMPLES = config["MIN_SAMPLES"]
+    LAYERS_PER_CHUNK = config["LAYERS_PER_CHUNK"]
+    OVERLAP_LAYERS = config["OVERLAP_LAYERS"]
+    SIGNALS_FOR_COV = config["SIGNALS"]
+    SIGNAL = SIGNALS_FOR_COV[0]
+
+    USE_DIRECT_ASSIGNMENT = METHOD == "direct"
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 

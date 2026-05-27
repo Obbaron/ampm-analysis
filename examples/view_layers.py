@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from ampm import DataStore
 from ampm.mask_cache import load_mask_keep
 from ampm.plotting import scatter2d_layered
-from ampm.config import load_config
+from ampm.config import create_or_load_config
 
 LAYERED_SIGNALS = [
     "MeltVIEW melt pool (mean)",
@@ -29,11 +29,11 @@ POINTS_PER_LAYER = 5_000
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python view_layers.py <build_directory>")
-    cfg = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
-    SOURCE = cfg["SOURCE"]
-    LAYER_THICKNESS = cfg["LAYER_THICKNESS"]
-    MASK_KEEP_CACHE = cfg["MASK_KEEP_CACHE"]
+    SOURCE = config["SOURCE"]
+    LAYER_THICKNESS = config["LAYER_THICKNESS"]
+    MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
     print(store)

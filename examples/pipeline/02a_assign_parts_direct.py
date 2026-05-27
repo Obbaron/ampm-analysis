@@ -23,20 +23,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import polars as pl
 
 from ampm import DataStore
-from ampm.config import load_config
 from ampm.mask_cache import mask_or_load
 from ampm.masking import apply_mask, build_mask
 from ampm.parts import QuantAMParts, assign_nearest_part
-
-MAX_DISTANCE_MM = (
-    None  # rows farther than this from any part become "noise"; None = assign every row
-)
+from ampm.config import create_or_load_config
 
 
 def main() -> None:
     if len(sys.argv) < 2:
         sys.exit("Usage: python 02a_assign_parts_direct.py <build_directory>")
-    config = load_config(sys.argv[1])
+    config = create_or_load_config(sys.argv[1])
 
     SOURCE = config["SOURCE"]
     STL = config["STL"]
@@ -44,6 +40,7 @@ def main() -> None:
     LAYER_THICKNESS = config["LAYER_THICKNESS"]
     MASK_CACHE = config["MASK_CACHE"]
     MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
+    MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
 
     store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
 
