@@ -9,7 +9,11 @@ Each Renishaw 500S build produces hundreds of layers, each containing ~250,000 m
 ### GUI (recommended)
 
 ```bash
-# Clone the repo and run the setup script
+# Clone the repo
+git clone https://github.com/Obbaron/ampm-analysis.git
+cd ampm-analysis
+
+# Run the setup script
 # Windows:
 setup.bat
 # Linux/macOS:
@@ -21,7 +25,7 @@ chmod +x setup.sh && ./setup.sh
 # Linux/macOS:
 source .venv/bin/activate
 
-# Launch the app
+# Launch the GUI
 python app.py
 ```
 
