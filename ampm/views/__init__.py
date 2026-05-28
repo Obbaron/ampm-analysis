@@ -8,7 +8,19 @@ is automatically discovered and made available to the app.
 from __future__ import annotations
 
 import importlib
+import sys
 from pathlib import Path
+
+_KNOWN_VIEWS = [  # so the compiler can discover them
+    "bar",
+    "contour",
+    "cov_summary",
+    "k_distance",
+    "kde",
+    "layer_viewer",
+    "scatter_2d",
+    "scatter_3d",
+]
 
 
 def discover() -> dict[str, object]:
@@ -23,13 +35,19 @@ def discover() -> dict[str, object]:
         run(df, config, axes, settings): None
     """
     views = {}
-    package_dir = Path(__file__).parent
 
-    for path in sorted(package_dir.glob("*.py")):
-        if path.name.startswith("_"):
-            continue
+    if getattr(sys, "frozen", False):
+        stems = _KNOWN_VIEWS
+    else:
+        package_dir = Path(__file__).parent
+        stems = [
+            path.stem
+            for path in sorted(package_dir.glob("*.py"))
+            if not path.name.startswith("_")
+        ]
 
-        module = importlib.import_module(f"ampm.views.{path.stem}")
+    for stem in stems:
+        module = importlib.import_module(f"ampm.views.{stem}")
 
         required = ("NAME", "AXES", "SETTINGS", "run")
         if not all(hasattr(module, attr) for attr in required):
