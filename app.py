@@ -326,7 +326,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtGui import QIcon
 
         base = (
-            Path(sys._MEIPASS)
+            Path(sys._MEIPASS)  # type: ignore[attr-defined]
             if getattr(sys, "frozen", False)
             else Path(__file__).parent
         )
@@ -369,7 +369,7 @@ class MainWindow(QMainWindow):
         dir_lbl.setFixedWidth(self._LABEL_WIDTH)
         dir_row.addWidget(dir_lbl)
         self._dir_edit = QLineEdit()
-        self._dir_edit.setPlaceholderText("Select root project directory...")
+        self._dir_edit.setPlaceholderText("Select project root directory...")
         self._dir_edit.setReadOnly(True)
         dir_browse = QPushButton("Browse...")
         dir_browse.clicked.connect(self._browse_build_dir)
@@ -439,7 +439,7 @@ class MainWindow(QMainWindow):
         lt_row = QHBoxLayout()
         lt_row.addWidget(QLabel("Layer thickness (mm):"))
         self._lt_edit = QLineEdit()
-        self._lt_edit.setReadOnly(True)
+        self._lt_edit.setPlaceholderText("e.g. 0.03")
         lt_row.addWidget(self._lt_edit, stretch=1)
         settings_layout.addLayout(lt_row)
 
