@@ -45,6 +45,7 @@ a = Analysis(
         'ampm.views.layer_viewer',
         'ampm.views.scatter_2d',
         'ampm.views.scatter_3d',
+        'ampm.views.single_layer',
         # Core dependencies
         'polars',
         'pyarrow',

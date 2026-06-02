@@ -17,6 +17,7 @@ _KNOWN_VIEWS = [  # so the compiler can discover them
     "cov_summary",
     "k_distance",
     "kde",
+    "single_layer",
     "layer_viewer",
     "scatter_2d",
     "scatter_3d",
