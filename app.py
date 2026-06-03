@@ -6,6 +6,7 @@ pick a view (plot type), configure axes and settings, and plot.
 """
 
 import builtins
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -24,12 +25,14 @@ from PyQt6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QMainWindow,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSpinBox,
     QSplitter,
     QTabWidget,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -122,19 +125,73 @@ def set_widget_value(widget, spec, value):
         widget.setText(str(value))
 
 
+class CollapsibleSection(QWidget):
+    """A header button that shows/hides a content area below it."""
+
+    def __init__(self, title: str, expanded: bool = False, parent=None) -> None:
+        super().__init__(parent)
+
+        self._toggle = QToolButton()
+        self._toggle.setText(title)
+        self._toggle.setCheckable(True)
+        self._toggle.setChecked(expanded)
+        self._toggle.setStyleSheet("QToolButton { border: none; font-weight: bold; }")
+        self._toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+        self._toggle.toggled.connect(self._on_toggled)
+
+        self._content = QWidget()
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(12, 0, 0, 0)
+        self._content.setVisible(expanded)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self._toggle)
+        outer.addWidget(self._content)
+
+    def _on_toggled(self, checked: bool) -> None:
+        self._toggle.setArrowType(
+            Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow
+        )
+        self._content.setVisible(checked)
+
+    def content_layout(self) -> QVBoxLayout:
+        """The layout callers should add their rows/widgets to."""
+        return self._content_layout
+
+
 class LoadWorker(QThread):
     """Loads, masks, and assigns data in a background thread."""
 
     log = pyqtSignal(str)
+    progress = pyqtSignal(int, str)
     finished_ok = pyqtSignal(object, object)
     finished_err = pyqtSignal(str)
+
+    _CACHE_LINE = re.compile(r"\[(\d+)/(\d+)\]")
 
     def __init__(self, config: dict) -> None:
         super().__init__()
         self.config = config
+        self._phase = None
+        self._load_band = (2, 55)  # (start%, end%) of the cache-build sub-phase
 
     def _print(self, msg):
         self.log.emit(msg)
+        if self._phase == "load":
+            m = self._CACHE_LINE.search(msg)
+            if m:
+                done, total = int(m.group(1)), int(m.group(2))
+                if total > 0:
+                    lo, hi = self._load_band
+                    pct = lo + (hi - lo) * done / total
+                    self.progress.emit(int(pct), "Loading data")
+
+    def _emit_progress(self, pct: int, label: str) -> None:
+        self.progress.emit(pct, label)
 
     def run(self):
         original_print = builtins.print
@@ -175,14 +232,51 @@ class LoadWorker(QThread):
         MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
         APPLY_MASK = config.get("APPLY_MASK", True)
         ASSIGN_PARTS = config.get("ASSIGN_PARTS", True)
+        LAYER_RANGE = config.get("LAYER_RANGE")  # None (all) or (lo, hi) inclusive
+
+        # Make bar reach 100% regardless of enabled steps
+        if APPLY_MASK and ASSIGN_PARTS:
+            self._load_band, mask_band, assign_band = (2, 50), (50, 68), (68, 96)
+        elif APPLY_MASK:
+            self._load_band, mask_band, assign_band = (2, 75), (75, 98), None
+        elif ASSIGN_PARTS:
+            self._load_band, mask_band, assign_band = (2, 60), None, (60, 96)
+        else:
+            self._load_band, mask_band, assign_band = (2, 96), None, None
+
+        self._phase = "load"
+        self._emit_progress(self._load_band[0], "Loading data")
 
         store = DataStore(SOURCE, layer_thickness=LAYER_THICKNESS)
-        df = store.query()
-        print(f"Loaded {df.height:,} rows across {len(store.layers)} layers.")
+        layers_arg = (
+            None if LAYER_RANGE is None else (int(LAYER_RANGE[0]), int(LAYER_RANGE[1]))
+        )
+        df = store.query(layers=layers_arg)
+
+        if LAYER_RANGE is None:
+            queried_layers = list(store.layers)
+        else:
+            lo, hi = int(LAYER_RANGE[0]), int(LAYER_RANGE[1])
+            queried_layers = [L for L in store.layers if lo <= L <= hi]
+        if not queried_layers:
+            raise ValueError(
+                f"No layers in the selected range {LAYER_RANGE}. "
+                f"Available: {min(store.layers)}–{max(store.layers)}."
+            )
+
+        layer_span = (min(queried_layers), max(queried_layers))
+        print(
+            f"Loaded {df.height:,} rows across {len(queried_layers)} layers "
+            f"({layer_span[0]}–{layer_span[1]})."
+        )
+        self._phase = None
+        self._emit_progress(self._load_band[1], "Loaded")
 
         if APPLY_MASK:
+            if mask_band is not None:
+                self._emit_progress(mask_band[0], "Applying mask")
             mask_params = {
-                "layers": (min(store.layers), max(store.layers)),
+                "layers": layer_span,
                 "stl": str(STL),
                 "buffer_mm": 0.0,
                 "layer_thickness": LAYER_THICKNESS,
@@ -191,7 +285,7 @@ class LoadWorker(QThread):
             def masking_wrapper(d):
                 mask = build_mask(
                     STL,
-                    layers=store.layers,
+                    layers=queried_layers,
                     layer_thickness=LAYER_THICKNESS,
                     buffer_mm=0.0,
                     cache_path=MASK_CACHE,
@@ -207,10 +301,14 @@ class LoadWorker(QThread):
                 strict=True,
             )
             print(f"After mask: {df.height:,} rows.")
+            if mask_band is not None:
+                self._emit_progress(mask_band[1], "Masked")
         else:
             print("Skipping mask.")
 
         if ASSIGN_PARTS:
+            if assign_band is not None:
+                self._emit_progress(assign_band[0], "Assigning parts")
             quantam = QuantAMParts.from_path(PARTS_CSV)
             parts_table = quantam.parent_parts()
             print(f"Loaded {parts_table.height} parts.")
@@ -231,7 +329,7 @@ class LoadWorker(QThread):
                 OVERLAP_LAYERS = config["OVERLAP_LAYERS"]
 
                 cluster_params = {
-                    "layers": (min(store.layers), max(store.layers)),
+                    "layers": layer_span,
                     "stl": str(STL),
                     "buffer_mm": 0.0,
                     "eps_xy": EPS_XY,
@@ -279,10 +377,13 @@ class LoadWorker(QThread):
                 on="part_id",
                 how="left",
             )
+            if assign_band is not None:
+                self._emit_progress(assign_band[1], "Assigned")
         else:
             print("Skipping part assignment.")
 
         print(f"Data ready: {df.height:,} rows, {len(df.columns)} columns.")
+        self._emit_progress(100, "Ready")
         return df
 
 
@@ -341,6 +442,7 @@ class MainWindow(QMainWindow):
         self._views_loaded = False
         self._axis_combos = {}
         self._setting_widgets = {}
+        self._available_layers = None
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -377,13 +479,19 @@ class MainWindow(QMainWindow):
         dir_row.addWidget(dir_browse)
         sources_layout.addLayout(dir_row)
 
-        self._source_edit = self._make_path_row(sources_layout, "Source:", is_dir=True)
+        self._paths_section = CollapsibleSection("Data source paths", expanded=False)
+        sources_layout.addWidget(self._paths_section)
+        paths_layout = self._paths_section.content_layout()
+
+        self._source_edit = self._make_path_row(paths_layout, "Source:", is_dir=True)
         self._stl_edit = self._make_path_row(
-            sources_layout, "STL:", file_filter="STL files (*.stl)"
+            paths_layout, "STL:", file_filter="STL files (*.stl)"
         )
         self._csv_edit = self._make_path_row(
-            sources_layout, "Parts CSV:", file_filter="CSV files (*.csv)"
+            paths_layout, "Parts CSV:", file_filter="CSV files (*.csv)"
         )
+
+        self._source_edit.textChanged.connect(self._probe_layers)
 
         config_layout.addWidget(sources_group)
 
@@ -443,6 +551,32 @@ class MainWindow(QMainWindow):
         lt_row.addWidget(self._lt_edit, stretch=1)
         settings_layout.addLayout(lt_row)
 
+        # Layer range
+        self._all_layers_check = QCheckBox("All layers")
+        self._all_layers_check.setChecked(True)
+        self._all_layers_check.setToolTip(
+            "Load every layer in the source. Uncheck to load a sub-range."
+        )
+        self._all_layers_check.toggled.connect(self._on_all_layers_toggled)
+        settings_layout.addWidget(self._all_layers_check)
+
+        self._layer_range_widget = QWidget()
+        layer_range_layout = QHBoxLayout(self._layer_range_widget)
+        layer_range_layout.setContentsMargins(0, 0, 0, 0)
+        layer_range_layout.addWidget(QLabel("From:"))
+        self._layer_from_spin = QSpinBox()
+        self._layer_from_spin.setRange(0, 999999)
+        layer_range_layout.addWidget(self._layer_from_spin)
+        layer_range_layout.addWidget(QLabel("To:"))
+        self._layer_to_spin = QSpinBox()
+        self._layer_to_spin.setRange(0, 999999)
+        layer_range_layout.addWidget(self._layer_to_spin)
+        self._layer_avail_label = QLabel("Available: \u2014")
+        self._layer_avail_label.setStyleSheet("color: gray;")
+        layer_range_layout.addWidget(self._layer_avail_label, stretch=1)
+        self._layer_range_widget.setEnabled(False)  # follows "All layers" checkbox
+        settings_layout.addWidget(self._layer_range_widget)
+
         self._mask_check = QCheckBox("Apply STL mask")
         self._mask_check.setChecked(True)
         self._mask_check.setToolTip(
@@ -466,6 +600,12 @@ class MainWindow(QMainWindow):
         self._load_btn.setMinimumHeight(40)
         self._load_btn.clicked.connect(self._load_data)
         config_layout.addWidget(self._load_btn)
+
+        self._load_progress = QProgressBar()
+        self._load_progress.setRange(0, 100)
+        self._load_progress.setTextVisible(True)
+        self._load_progress.setVisible(False)
+        config_layout.addWidget(self._load_progress)
 
         config_layout.addStretch()
 
@@ -547,6 +687,11 @@ class MainWindow(QMainWindow):
         self._plot_btn.clicked.connect(self._run_plot)
         view_layout.addWidget(self._plot_btn)
 
+        self._plot_progress = QProgressBar()
+        self._plot_progress.setTextVisible(False)
+        self._plot_progress.setVisible(False)
+        view_layout.addWidget(self._plot_progress)
+
         analysis_layout.addWidget(view_group)
         analysis_layout.addStretch()
 
@@ -621,6 +766,46 @@ class MainWindow(QMainWindow):
     def _on_method_changed(self, method):
         self._cluster_widget.setVisible(method == "dbscan")
 
+    def _on_all_layers_toggled(self, all_layers: bool) -> None:
+        self._layer_range_widget.setEnabled(not all_layers)
+
+    def _set_layers_unavailable(self) -> None:
+        self._available_layers = None
+        self._layer_avail_label.setText("Available: \u2014")
+
+    def _probe_layers(self) -> None:
+        """Cheaply read the available layer numbers from the source directory.
+
+        DataStore construction only scans filenames (no Parquet build), so this
+        is safe to run synchronously whenever the source path changes.
+        """
+        src = self._source_edit.text().strip()
+        if not src:
+            self._set_layers_unavailable()
+            return
+        try:
+            from ampm import DataStore
+
+            store = DataStore(src)  # layer_thickness irrelevant for layer discovery
+            layers = store.layers
+        except Exception:
+            self._set_layers_unavailable()
+            return
+
+        lo, hi = min(layers), max(layers)
+        self._available_layers = (lo, hi)
+        for spin in (self._layer_from_spin, self._layer_to_spin):
+            spin.setRange(lo, hi)
+        self._layer_from_spin.setValue(lo)
+        self._layer_to_spin.setValue(hi)
+        self._layer_avail_label.setText(
+            f"Available: {lo}\u2013{hi} ({len(layers)} layers)"
+        )
+
+    def _on_progress(self, pct: int, label: str) -> None:
+        self._load_progress.setValue(pct)
+        self._load_progress.setFormat(f"{label} \u2014 %p%")
+
     def _browse_build_dir(self):
         path = QFileDialog.getExistingDirectory(self, "Select packet directory")
         if not path:
@@ -688,6 +873,13 @@ class MainWindow(QMainWindow):
         config["APPLY_MASK"] = self._mask_check.isChecked()
         config["ASSIGN_PARTS"] = self._assign_check.isChecked()
 
+        if self._all_layers_check.isChecked():
+            config["LAYER_RANGE"] = None
+        else:
+            lo = self._layer_from_spin.value()
+            hi = self._layer_to_spin.value()
+            config["LAYER_RANGE"] = (min(lo, hi), max(lo, hi))
+
         source = config["SOURCE"]
         config["MASK_CACHE"] = str(Path(source) / ".cache" / "fullplate_mask.pkl")
         config["MASK_KEEP_CACHE"] = str(Path(source) / ".cache" / "mask_keep.pq")
@@ -700,6 +892,9 @@ class MainWindow(QMainWindow):
         self._config = config
 
         self._load_btn.setEnabled(False)
+        self._load_progress.setValue(0)
+        self._load_progress.setFormat("Starting \u2014 %p%")
+        self._load_progress.setVisible(True)
 
         idx = self._tabs.indexOf(self._analysis_tab)
         if idx != -1:
@@ -715,6 +910,7 @@ class MainWindow(QMainWindow):
 
         self._load_worker = LoadWorker(config)
         self._load_worker.log.connect(self._on_log)
+        self._load_worker.progress.connect(self._on_progress)
         self._load_worker.finished_ok.connect(self._on_load_ok)
         self._load_worker.finished_err.connect(self._on_load_err)
         self._load_worker.start()
@@ -722,6 +918,8 @@ class MainWindow(QMainWindow):
     def _on_load_ok(self, df, config):
         self._df = df
         self._config = config
+        self._load_progress.setValue(100)
+        self._load_progress.setVisible(False)
         self._log.append("")
         self._log.append("Data loaded and ready.")
 
@@ -739,6 +937,7 @@ class MainWindow(QMainWindow):
         self._load_worker = None
 
     def _on_load_err(self, tb):
+        self._load_progress.setVisible(False)
         self._log.append("")
         self._log.append("ERROR: Data load failed.")
         self._log.append(tb)
@@ -957,6 +1156,8 @@ class MainWindow(QMainWindow):
             self._log.append(f"Plotting: {view_name} (row-level, {df.height:,} rows)")
 
         self._plot_btn.setEnabled(False)
+        self._plot_progress.setRange(0, 0)  # indeterminate / busy
+        self._plot_progress.setVisible(True)
         self._plot_worker = PlotWorker(module, df, merged_config, axes, settings)
         self._plot_worker.log.connect(self._on_log)
         self._plot_worker.finished_ok.connect(self._on_plot_ok)
@@ -964,6 +1165,7 @@ class MainWindow(QMainWindow):
         self._plot_worker.start()
 
     def _on_plot_ok(self):
+        self._plot_progress.setVisible(False)
         self._log.append("Plot complete.")
         self._plot_btn.setEnabled(True)
         if self._plot_worker is not None:
@@ -971,6 +1173,7 @@ class MainWindow(QMainWindow):
         self._plot_worker = None
 
     def _on_plot_err(self, tb):
+        self._plot_progress.setVisible(False)
         self._log.append("ERROR: Plot failed.")
         self._log.append(tb)
         self._plot_btn.setEnabled(True)
