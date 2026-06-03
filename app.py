@@ -40,6 +40,14 @@ from PyQt6.QtWidgets import (
 sys.path.insert(0, str(Path(__file__).parent))
 
 
+class NoScrollComboBox(QComboBox):
+    """A combo box that ignores wheel events."""
+
+    def wheelEvent(self, e):
+        if e is not None:
+            e.ignore()
+
+
 def build_widget(spec: dict) -> QWidget:
     """Create the appropriate widget for a setting spec."""
     wtype = spec["type"]
@@ -58,7 +66,7 @@ def build_widget(spec: dict) -> QWidget:
         return widget
 
     if wtype == "choice":
-        widget = QComboBox()
+        widget = NoScrollComboBox()
         widget.addItems(spec.get("options", []))
         default = spec.get("default")
         if default is not None:
@@ -321,7 +329,7 @@ class LoadWorker(QThread):
             print(f"Loaded {parts_table.height} parts.")
 
             if METHOD == "direct":
-                print("Assigning parts (direct)...\n")
+                print("Assigning parts (direct)...")
                 df = assign_nearest_part(
                     df,
                     parts_table,
@@ -509,7 +517,7 @@ class MainWindow(QMainWindow):
 
         method_row = QHBoxLayout()
         method_row.addWidget(QLabel("Method:"))
-        self._method_combo = QComboBox()
+        self._method_combo = NoScrollComboBox()
         self._method_combo.addItems(["direct", "dbscan"])
         self._method_combo.currentTextChanged.connect(self._on_method_changed)
         method_row.addWidget(self._method_combo, stretch=1)
@@ -633,16 +641,16 @@ class MainWindow(QMainWindow):
 
         add_row = QHBoxLayout()
         add_row.addWidget(QLabel("Stat:"))
-        self._derived_stat = QComboBox()
+        self._derived_stat = NoScrollComboBox()
         self._derived_stat.addItems(["CoV"])
         add_row.addWidget(self._derived_stat)
 
         add_row.addWidget(QLabel("Signal:"))
-        self._derived_signal = QComboBox()
+        self._derived_signal = NoScrollComboBox()
         add_row.addWidget(self._derived_signal, stretch=1)
 
         add_row.addWidget(QLabel("Mode:"))
-        self._derived_mode = QComboBox()
+        self._derived_mode = NoScrollComboBox()
         self._derived_mode.addItems(["overall", "per_layer_mean", "across_layers"])
         add_row.addWidget(self._derived_mode)
 
@@ -667,7 +675,7 @@ class MainWindow(QMainWindow):
 
         selector_row = QHBoxLayout()
         selector_row.addWidget(QLabel("Type:"))
-        self._view_combo = QComboBox()
+        self._view_combo = NoScrollComboBox()
         self._view_combo.addItems(list(self._views.keys()))
         self._view_combo.currentTextChanged.connect(self._on_view_changed)
         selector_row.addWidget(self._view_combo, stretch=1)
@@ -692,14 +700,14 @@ class MainWindow(QMainWindow):
         self._plot_btn = QPushButton("Plot")
         self._plot_btn.setMinimumHeight(40)
         self._plot_btn.clicked.connect(self._run_plot)
-        view_layout.addWidget(self._plot_btn)
 
         self._plot_progress = QProgressBar()
         self._plot_progress.setTextVisible(False)
         self._plot_progress.setVisible(False)
-        view_layout.addWidget(self._plot_progress)
 
         analysis_layout.addWidget(view_group)
+        analysis_layout.addWidget(self._plot_btn)
+        analysis_layout.addWidget(self._plot_progress)
         analysis_layout.addStretch()
 
         self._analysis_tab = analysis_scroll
@@ -1124,7 +1132,7 @@ class MainWindow(QMainWindow):
         for key, spec in axes.items():
             row = QHBoxLayout()
             row.addWidget(QLabel(spec.get("label", key) + ":"))
-            combo = QComboBox()
+            combo = NoScrollComboBox()
             combo.addItem("")
             combo.addItems(cols)
             default = spec.get("default")
