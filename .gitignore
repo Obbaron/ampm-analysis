@@ -209,9 +209,11 @@ __marimo__/
 # Project data directories
 data/
 data_files/
+build_macos/
 
-# Scratch files
+# Dev files
 archi.py
+build_macos.sh
 explore.py
 mtt.py
 y.py
