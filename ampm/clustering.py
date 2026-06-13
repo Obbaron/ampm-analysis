@@ -15,8 +15,8 @@ Key design choices:
   integer column, ready for plotting (color="cluster") or remapping to
   part IDs.
 
-Typical usage
--------------
+Usage
+-----
     from ampm.clustering import k_distance_curve, cluster_dbscan
     from ampm.plotting import scatter2d, scatter3d
 

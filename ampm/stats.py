@@ -97,23 +97,29 @@ def compute_cov(
     if mode in ("per_layer_mean", "across_layers") and layer_col not in df.columns:
         raise KeyError(f"mode={mode!r} requires layer_col {layer_col!r} in DataFrame")
 
-    work = df
+    needed = [group_by, *cols]
+    if mode in ("per_layer_mean", "across_layers"):
+        needed.append(layer_col)
+    work = df.lazy().select(list(dict.fromkeys(needed)))
+
     if drop_noise:
         if noise_label is None:
             work = work.filter(pl.col(group_by).is_not_null())
         else:
             work = work.filter(pl.col(group_by) != noise_label)
 
-    if work.is_empty():
+    if mode == "overall":
+        out = _compute_overall(work, cols, group_by, eps)
+    elif mode == "per_layer_mean":
+        out = _compute_per_layer_mean(work, cols, group_by, layer_col, eps)
+    else:
+        out = _compute_across_layers(work, cols, group_by, layer_col, eps)
+
+    if out.is_empty():
         return pl.DataFrame(
             {group_by: [], "n_rows": [], **{f"cov_{c}": [] for c in cols}}
         )
-
-    if mode == "overall":
-        return _compute_overall(work, cols, group_by, eps)
-    if mode == "per_layer_mean":
-        return _compute_per_layer_mean(work, cols, group_by, layer_col, eps)
-    return _compute_across_layers(work, cols, group_by, layer_col, eps)
+    return out
 
 
 def _cov_expr(col: str, eps: float) -> pl.Expr:
@@ -128,23 +134,23 @@ def _cov_expr(col: str, eps: float) -> pl.Expr:
 
 
 def _compute_overall(
-    df: pl.DataFrame,
+    lf: pl.LazyFrame,
     cols: list[str],
     group_by: str,
     eps: float,
 ) -> pl.DataFrame:
     aggs = [pl.len().alias("n_rows")] + [_cov_expr(c, eps) for c in cols]
-    return df.group_by(group_by).agg(aggs).sort(group_by)
+    return lf.group_by(group_by).agg(aggs).sort(group_by).collect(engine="streaming")
 
 
 def _compute_per_layer_mean(
-    df: pl.DataFrame,
+    lf: pl.LazyFrame,
     cols: list[str],
     group_by: str,
     layer_col: str,
     eps: float,
 ) -> pl.DataFrame:
-    per_layer = df.group_by([group_by, layer_col]).agg(
+    per_layer = lf.group_by([group_by, layer_col]).agg(
         [_cov_expr(c, eps) for c in cols]
     )
     final = (
@@ -155,17 +161,17 @@ def _compute_per_layer_mean(
         )
         .sort(group_by)
     )
-    return final
+    return final.collect(engine="streaming")
 
 
 def _compute_across_layers(
-    df: pl.DataFrame,
+    lf: pl.LazyFrame,
     cols: list[str],
     group_by: str,
     layer_col: str,
     eps: float,
 ) -> pl.DataFrame:
-    per_layer_mean = df.group_by([group_by, layer_col]).agg(
+    per_layer_mean = lf.group_by([group_by, layer_col]).agg(
         [pl.col(c).mean().alias(c) for c in cols]
     )
     final = (
@@ -173,4 +179,4 @@ def _compute_across_layers(
         .agg([pl.len().alias("n_rows")] + [_cov_expr(c, eps) for c in cols])
         .sort(group_by)
     )
-    return final
+    return final.collect(engine="streaming")

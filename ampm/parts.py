@@ -49,6 +49,7 @@ from typing import Iterator
 
 import numpy as np
 import polars as pl
+import pyarrow as pa
 
 SECTION_PARENT = "Parent Parts"
 SECTION_GENERAL = "General"
@@ -674,7 +675,7 @@ def assign_nearest_part(
 
     Returns
     -------
-    DataFrame with a new ``part_id_col`` (String dtype) added.
+    DataFrame with a new ``part_id_col`` added as a ``pl.Enum`` column.
 
     See also
     --------
@@ -702,8 +703,23 @@ def assign_nearest_part(
     y = masked[y_col].to_numpy()
     n_rows = x.shape[0]
 
-    nearest_idx = np.empty(n_rows, dtype=np.intp)
-    nearest_dist = np.empty(n_rows, dtype=np.float32)
+    categories = [str(p) for p in part_ids]
+    noise_code: int | None = None
+    if noise_label is not None:
+        if noise_label not in categories:
+            categories.append(noise_label)
+        noise_code = categories.index(noise_label)
+
+    codes = np.empty(n_rows, dtype=np.uint32)
+    null_far = (
+        np.zeros(n_rows, dtype=bool)
+        if (max_distance_mm is not None and noise_label is None)
+        else None
+    )
+    counts = np.zeros(n_parts, dtype=np.int64)
+    dist_sums = np.zeros(n_parts, dtype=np.float64)
+    dist_maxs = np.zeros(n_parts, dtype=np.float32)
+    n_too_far = 0
 
     target_bytes = 128 * 1024 * 1024  # 128 MB
     chunk = max(1, int(min(n_rows, max(1, target_bytes // (max(n_parts, 1) * 4)))))
@@ -715,48 +731,65 @@ def assign_nearest_part(
         dist2 = dx * dx + dy * dy
         del dx, dy
         idx = dist2.argmin(axis=1)
-        nearest_idx[start:stop] = idx
-        nearest_dist[start:stop] = np.sqrt(
-            np.take_along_axis(dist2, idx[:, None], axis=1).ravel()
+        d = np.sqrt(np.take_along_axis(dist2, idx[:, None], axis=1).ravel())
+        del dist2
+
+        chunk_codes = idx.astype(np.uint32)
+        if max_distance_mm is not None:
+            far = d > max_distance_mm
+            n_far = int(far.sum())
+            if n_far:
+                n_too_far += n_far
+                if noise_code is not None:
+                    chunk_codes[far] = noise_code
+                else:
+                    null_far[start:stop] = far
+                keep = ~far
+                idx = idx[keep]
+                d = d[keep]
+        codes[start:stop] = chunk_codes
+
+        if idx.size:
+            counts += np.bincount(idx, minlength=n_parts)
+            dist_sums += np.bincount(idx, weights=d, minlength=n_parts)
+            np.maximum.at(dist_maxs, idx, d.astype(np.float32))
+        del idx, d, chunk_codes
+
+    if n_too_far > 0 and verbose:
+        pct = n_too_far / n_rows
+        print(
+            f"[assign_nearest_part] {n_too_far:,} row(s) "
+            f"({pct:.1%}) farther than {max_distance_mm} mm from any "
+            f"part → labelled {noise_label!r}"
         )
-        del dist2, idx
 
-    assigned = np.asarray(part_ids, dtype=object)[nearest_idx]
+    dict_arr = pa.DictionaryArray.from_arrays(pa.array(codes), pa.array(categories))
+    part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
+        pl.Enum(categories)
+    )
+    if null_far is not None and n_too_far > 0:
+        part_series = pl.DataFrame({part_id_col: part_series, "_f": null_far}).select(
+            pl.when(pl.col("_f"))
+            .then(None)
+            .otherwise(pl.col(part_id_col))
+            .alias(part_id_col)
+        )[part_id_col]
 
-    too_far = None
-    if max_distance_mm is not None:
-        too_far = nearest_dist > max_distance_mm
-        n_too_far = int(too_far.sum())
-        if n_too_far > 0:
-            assigned[too_far] = noise_label  # may be None
-            if verbose:
-                pct = n_too_far / len(assigned)
-                print(
-                    f"[assign_nearest_part] {n_too_far:,} row(s) "
-                    f"({pct:.1%}) farther than {max_distance_mm} mm from any "
-                    f"part → labelled {noise_label!r}"
-                )
-
-    out = masked.with_columns(pl.Series(part_id_col, assigned, dtype=pl.String))
+    out = masked.with_columns(part_series)
 
     if verbose:
         print(
-            f"[assign_nearest_part] Assigned {len(assigned):,} rows to "
-            f"{n_parts} part(s):"
+            f"[assign_nearest_part] Assigned {n_rows:,} rows to " f"{n_parts} part(s):"
         )
         for i, pid in enumerate(part_ids):
-            mask = nearest_idx == i
-            if too_far is not None:
-                mask = mask & ~too_far
-            n = int(mask.sum())
+            n = int(counts[i])
             if n == 0:
                 print(f"  {pid}: 0 rows assigned")
                 continue
-            d = nearest_dist[mask]
             print(
                 f"  {pid}: {n:>9,} rows, "
-                f"distance mean={d.mean():.2f} mm, "
-                f"max={d.max():.2f} mm"
+                f"distance mean={dist_sums[i] / n:.2f} mm, "
+                f"max={dist_maxs[i]:.2f} mm"
             )
 
     return out

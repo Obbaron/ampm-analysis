@@ -15,8 +15,8 @@ Why store params metadata?
 - So you don't accidentally load labels computed under different DBSCAN
   parameters than what you're about to use. Strict comparison is the default.
 
-Typical usage
--------------
+Usage
+-----
     params = {
         "layers": (1, 434),
         "stl": str(STL),

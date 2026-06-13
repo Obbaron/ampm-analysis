@@ -6,8 +6,8 @@ whose (x, y) falls inside that layer's polygon. Designed for the AMPM workflow
 where coordinates are already aligned (build-plate frame) and slicing is
 naturally per-layer.
 
-Typical usage
--------------
+Usage
+-----
     from ampm import DataStore
     from ampm.masking import build_mask, apply_mask
 
@@ -43,7 +43,7 @@ from shapely.geometry.base import BaseGeometry
 Mask = dict[int, BaseGeometry]
 
 # STLs above this size are sliced with the streaming slicer instead of trimesh
-LARGE_STL_BYTES = 256 * 2**20  # 256mm
+LARGE_STL_BYTES = 256 * 2**20  # 256MB
 
 
 def build_mask(
@@ -181,6 +181,7 @@ def apply_mask(
     x_col: str = "Demand X",
     y_col: str = "Demand Y",
     layer_col: str = "layer",
+    chunk_rows: int = 8_000_000,
 ) -> pl.DataFrame:
     """
     Return only the rows of ``df`` that fall inside the mask polygon for
@@ -189,8 +190,9 @@ def apply_mask(
     Rows whose layer is not in the mask (e.g. layers above or below the part,
     or layers we never sliced) are dropped.
 
-    Memory: builds a single boolean keep-array of length N alongside the
-    input DataFrame; no per-layer DataFrame copies are made.
+    Memory: the containment test is streamed in chunks of rows, so peak
+    overhead is one boolean array of length N plus one chunk of coordinates
+    (~200 MB at the default), independent of build density.
 
     Parameters
     ----------
@@ -200,29 +202,78 @@ def apply_mask(
         Output of ``build_mask``.
     x_col, y_col, layer_col
         Column names. Defaults match the DataStore output.
+    chunk_rows
+        Rows tested per chunk. Smaller bounds memory tighter; larger is
+        marginally faster.
+    """
+    keep = apply_mask_keep(
+        df,
+        mask,
+        x_col=x_col,
+        y_col=y_col,
+        layer_col=layer_col,
+        chunk_rows=chunk_rows,
+    )
+    if keep is None:  # empty input
+        return df
+    return df.filter(pl.Series(keep))
+
+
+def apply_mask_keep(
+    df: pl.DataFrame,
+    mask: Mask,
+    x_col: str = "Demand X",
+    y_col: str = "Demand Y",
+    layer_col: str = "layer",
+    chunk_rows: int = 8_000_000,
+) -> np.ndarray | None:
+    """
+    Computes boolean keep-array for ``df`` against ``mask`` without
+    filtering the DataFrame.
+
+    Parameters
+    ----------
+    df
+        DataFrame with columns ``x_col``, ``y_col``, ``layer_col``.
+    mask
+        Output of ``build_mask``.
+    x_col, y_col, layer_col
+        Column names. Defaults match the DataStore output.
+    chunk_rows
+        Rows tested per chunk.
+
+    Returns
+    -------
+    ndarray[bool, shape (df.height,), or None]
+        True where the row falls inside its layer's geometry; None if
+        ``df`` is empty.
     """
     for c in (x_col, y_col, layer_col):
         if c not in df.columns:
             raise KeyError(f"Column {c!r} not in DataFrame")
 
     if df.is_empty():
-        return df
+        return None
 
-    layers = df[layer_col].to_numpy()
-    xs = df[x_col].to_numpy()
-    ys = df[y_col].to_numpy()
+    for geom in mask.values():
+        shapely.prepare(geom)
+
     keep = np.zeros(df.height, dtype=bool)
 
-    for layer_n, geom in mask.items():
-        idx = np.flatnonzero(layers == layer_n)
-        if idx.size == 0:
-            continue
-        shapely.prepare(geom)
-        points = shapely.points(xs[idx], ys[idx])
-        inside = shapely.contains(geom, points)
-        keep[idx] = inside
+    for start in range(0, df.height, chunk_rows):
+        sub = df.slice(start, chunk_rows).select(x_col, y_col, layer_col)
+        xs = sub[x_col].to_numpy()
+        ys = sub[y_col].to_numpy()
+        layers = sub[layer_col].to_numpy()
 
-    return df.filter(pl.Series(keep))
+        for layer_n in np.unique(layers):
+            geom = mask.get(int(layer_n))
+            if geom is None:
+                continue
+            idx = np.flatnonzero(layers == layer_n)
+            keep[start + idx] = shapely.contains_xy(geom, xs[idx], ys[idx])
+
+    return keep
 
 
 def stl_hash(stl_path: str | Path) -> str:

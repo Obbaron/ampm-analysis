@@ -207,6 +207,7 @@ marimo/_lsp/
 __marimo__/
 
 # Project data directories
+bak/
 data/
 data_files/
 build_macos/

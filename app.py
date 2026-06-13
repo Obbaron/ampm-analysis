@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import cast
 
 from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSignal
+from PyQt6.QtGui import QDoubleValidator
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -164,6 +165,9 @@ _OVERLAY_KEYS = (
     "APPLY_MASK",
     "ASSIGN_PARTS",
     "LAYER_RANGE",
+    "LOAD_COLUMNS",
+    "X_RANGE",
+    "Y_RANGE",
 )
 
 
@@ -190,7 +194,7 @@ def load_ui_state(project_root) -> dict:
 
 
 def save_ui_state(project_root, state: dict) -> None:
-    """Write the sidecar UI state atomically. Never raises."""
+    """Write the sidecar UI state atomically."""
     path = _ui_state_path(project_root)
     tmp = path.parent / (path.name + ".tmp")
     try:
@@ -289,7 +293,8 @@ class LoadWorker(QThread):
         from ampm.cluster_cache import cluster_or_load
         from ampm.clustering import cluster_dbscan_chunked
         from ampm.mask_cache import mask_or_load
-        from ampm.masking import apply_mask, build_mask, stl_hash
+        from ampm.masking import apply_mask_keep, build_mask, stl_hash
+        from ampm.memprof import phase
         from ampm.parts import (
             QuantAMParts,
             apply_part_id_map,
@@ -309,7 +314,10 @@ class LoadWorker(QThread):
         MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
         APPLY_MASK = config.get("APPLY_MASK", True)
         ASSIGN_PARTS = config.get("ASSIGN_PARTS", True)
-        LAYER_RANGE = config.get("LAYER_RANGE")  # None (all) or (lo, hi)
+        LAYER_RANGE = config.get("LAYER_RANGE")  # None or (lo, hi)
+        LOAD_COLUMNS = config.get("LOAD_COLUMNS")  # None or [cols]
+        X_RANGE = config.get("X_RANGE")  # None or (min, max)
+        Y_RANGE = config.get("Y_RANGE")  # None or (min, max)
 
         if APPLY_MASK and ASSIGN_PARTS:
             self._load_band, mask_band, assign_band = (2, 50), (50, 68), (68, 96)
@@ -327,7 +335,29 @@ class LoadWorker(QThread):
         layers_arg = (
             None if LAYER_RANGE is None else (int(LAYER_RANGE[0]), int(LAYER_RANGE[1]))
         )
-        df = store.query(layers=layers_arg)
+        if LOAD_COLUMNS is None:
+            columns_arg = None
+        else:
+            required = ["Demand X", "Demand Y", "Start time"]
+            columns_arg = list(dict.fromkeys([*required, *LOAD_COLUMNS]))
+            print(
+                f"Column pruning active: loading {len(columns_arg)} signal "
+                f"column(s) + layer, Z."
+            )
+        if X_RANGE is not None or Y_RANGE is not None:
+            bounds = []
+            if X_RANGE is not None:
+                bounds.append(f"X\u2208[{X_RANGE[0]}, {X_RANGE[1]}]")
+            if Y_RANGE is not None:
+                bounds.append(f"Y\u2208[{Y_RANGE[0]}, {Y_RANGE[1]}]")
+            print("Spatial filter active: " + ", ".join(bounds) + ".")
+        with phase("load: store.query"):
+            df = store.query(
+                layers=layers_arg,
+                columns=columns_arg,
+                x_range=X_RANGE,
+                y_range=Y_RANGE,
+            )
 
         if LAYER_RANGE is None:
             queried_layers = list(store.layers)
@@ -357,9 +387,11 @@ class LoadWorker(QThread):
                 "stl_sha256": stl_hash(STL),
                 "buffer_mm": 0.0,
                 "layer_thickness": LAYER_THICKNESS,
+                "x_range": list(X_RANGE) if X_RANGE is not None else None,
+                "y_range": list(Y_RANGE) if Y_RANGE is not None else None,
             }
 
-            def masking_wrapper(d):
+            def keep_wrapper(d):
                 mask = build_mask(
                     STL,
                     layers=queried_layers,
@@ -367,16 +399,17 @@ class LoadWorker(QThread):
                     buffer_mm=0.0,
                     cache_path=MASK_CACHE,
                 )
-                return apply_mask(d, mask)
+                return apply_mask_keep(d, mask)
 
             print("Applying mask...")
-            df = mask_or_load(
-                df,
-                cache_path=MASK_KEEP_CACHE,
-                mask_fn=masking_wrapper,
-                params=mask_params,
-                strict=False,
-            )
+            with phase("mask: mask_or_load total"):
+                df = mask_or_load(
+                    df,
+                    cache_path=MASK_KEEP_CACHE,
+                    keep_fn=keep_wrapper,
+                    params=mask_params,
+                    strict=False,
+                )
             print(f"After mask: {df.height:,} rows.")
             if mask_band is not None:
                 self._emit_progress(mask_band[1], "Masked")
@@ -392,12 +425,13 @@ class LoadWorker(QThread):
 
             if METHOD == "direct":
                 print("Assigning parts (direct)...")
-                df = assign_nearest_part(
-                    df,
-                    parts_table,
-                    max_distance_mm=MAX_DISTANCE_MM,
-                    noise_label="noise",
-                )
+                with phase("assign: assign_nearest_part"):
+                    df = assign_nearest_part(
+                        df,
+                        parts_table,
+                        max_distance_mm=MAX_DISTANCE_MM,
+                        noise_label="noise",
+                    )
             else:
                 EPS_XY = config["EPS_XY"]
                 EPS_Z = config["EPS_Z"]
@@ -443,17 +477,35 @@ class LoadWorker(QThread):
                 df = apply_part_id_map(clustered, mapping, noise_label="noise")
 
             parts_with_speed = quantam.volume_parameters_with_speed()
-            df = df.join(
-                parts_with_speed.select(
-                    [
-                        pl.col("Part ID").alias("part_id"),
-                        "Hatches Power",
-                        "Hatch Speed",
-                    ]
-                ),
-                on="part_id",
-                how="left",
-            )
+            with phase("assign: attach power/speed (lookup)"):
+                _ids = parts_with_speed["Part ID"].to_list()
+                _power = dict(zip(_ids, parts_with_speed["Hatches Power"].to_list()))
+                _speed = dict(zip(_ids, parts_with_speed["Hatch Speed"].to_list()))
+                _pid_dtype = df["part_id"].dtype
+                if isinstance(_pid_dtype, pl.Enum) and df["part_id"].null_count() == 0:
+                    import numpy as np
+
+                    _cats = _pid_dtype.categories.to_list()
+                    _phys = df["part_id"].to_physical().to_numpy()
+                    _pw = np.array(
+                        [_power.get(c, np.nan) for c in _cats], dtype=np.float32
+                    )
+                    _sp = np.array(
+                        [_speed.get(c, np.nan) for c in _cats], dtype=np.float32
+                    )
+                    df = df.with_columns(
+                        pl.Series("Hatches Power", _pw[_phys]).fill_nan(None),
+                        pl.Series("Hatch Speed", _sp[_phys]).fill_nan(None),
+                    )
+                else:  # String part_id (e.g. DBSCAN path)
+                    df = df.with_columns(
+                        pl.col("part_id")
+                        .replace_strict(_power, default=None, return_dtype=pl.Float64)
+                        .alias("Hatches Power"),
+                        pl.col("part_id")
+                        .replace_strict(_speed, default=None, return_dtype=pl.Float64)
+                        .alias("Hatch Speed"),
+                    )
             if assign_band is not None:
                 self._emit_progress(assign_band[1], "Assigned")
         else:
@@ -657,6 +709,59 @@ class MainWindow(QMainWindow):
         layer_range_layout.addWidget(self._layer_avail_label, stretch=1)
         self._layer_range_widget.setEnabled(False)  # follows "All layers" checkbox
         settings_layout.addWidget(self._layer_range_widget)
+
+        # Columns to load
+        cols_row = QHBoxLayout()
+        cols_row.addWidget(QLabel("Columns:"))
+        self._columns_edit = QLineEdit()
+        self._columns_edit.setText("all")
+        self._columns_edit.setPlaceholderText(
+            "all  — or comma-separated signal columns"
+        )
+        self._columns_edit.setToolTip(
+            "Signal columns to load, comma-separated (e.g. 'MeltVIEW melt pool "
+            "(mean), Laser output power (mean)'). 'all' loads every column. "
+            "Demand X/Y, Start time, layer, and Z are always included. For "
+            "dense builds, loading only the columns you analyze cuts memory "
+            "roughly in proportion."
+        )
+        cols_row.addWidget(self._columns_edit, stretch=1)
+        settings_layout.addLayout(cols_row)
+
+        # X / Y spatial range (optional). Blank = no bound on that side.
+        xr_row = QHBoxLayout()
+        xr_row.addWidget(QLabel("X range:"))
+        self._x_min_edit = QLineEdit()
+        self._x_min_edit.setPlaceholderText("min")
+        self._x_min_edit.setValidator(QDoubleValidator())
+        xr_row.addWidget(self._x_min_edit)
+        xr_row.addWidget(QLabel("to"))
+        self._x_max_edit = QLineEdit()
+        self._x_max_edit.setPlaceholderText("max")
+        self._x_max_edit.setValidator(QDoubleValidator())
+        xr_row.addWidget(self._x_max_edit)
+        xr_row.addWidget(QLabel("Y range:"))
+        self._y_min_edit = QLineEdit()
+        self._y_min_edit.setPlaceholderText("min")
+        self._y_min_edit.setValidator(QDoubleValidator())
+        xr_row.addWidget(self._y_min_edit)
+        xr_row.addWidget(QLabel("to"))
+        self._y_max_edit = QLineEdit()
+        self._y_max_edit.setPlaceholderText("max")
+        self._y_max_edit.setValidator(QDoubleValidator())
+        xr_row.addWidget(self._y_max_edit)
+        _xy_tip = (
+            "Optional inclusive bounds on Demand X / Demand Y (mm), applied "
+            "at load time. Leave a box blank for no bounds."
+        )
+        for _w in (
+            self._x_min_edit,
+            self._x_max_edit,
+            self._y_min_edit,
+            self._y_max_edit,
+        ):
+            _w.setToolTip(_xy_tip)
+        settings_layout.addLayout(xr_row)
 
         self._mask_check = QCheckBox("Apply STL mask")
         self._mask_check.setChecked(True)
@@ -1076,38 +1181,38 @@ class MainWindow(QMainWindow):
         }
         self._log.append("Found a saved setup; it will be restored after load.")
 
-    def _apply_config_overrides(self, o: dict) -> None:
+    def _apply_config_overrides(self, override: dict) -> None:
         """Apply persisted pipeline params to the config-tab widgets."""
-        if "LAYER_THICKNESS" in o:
-            self._lt_edit.setText(str(o["LAYER_THICKNESS"]))
-        if "METHOD" in o:
-            self._method_combo.setCurrentText(str(o["METHOD"]))
-        if "MAX_DISTANCE_MM" in o:
-            md = o["MAX_DISTANCE_MM"]
+        if "LAYER_THICKNESS" in override:
+            self._lt_edit.setText(str(override["LAYER_THICKNESS"]))
+        if "METHOD" in override:
+            self._method_combo.setCurrentText(str(override["METHOD"]))
+        if "MAX_DISTANCE_MM" in override:
+            md = override["MAX_DISTANCE_MM"]
             self._max_dist_edit.setText("none" if md is None else str(md))
-        if "EPS_XY" in o:
-            self._eps_xy_edit.setText(str(o["EPS_XY"]))
-        if "EPS_Z" in o:
-            self._eps_z_edit.setText(str(o["EPS_Z"]))
-        if "MIN_SAMPLES" in o:
+        if "EPS_XY" in override:
+            self._eps_xy_edit.setText(str(override["EPS_XY"]))
+        if "EPS_Z" in override:
+            self._eps_z_edit.setText(str(override["EPS_Z"]))
+        if "MIN_SAMPLES" in override:
             try:
-                self._min_samples_spin.setValue(int(o["MIN_SAMPLES"]))
+                self._min_samples_spin.setValue(int(override["MIN_SAMPLES"]))
             except (TypeError, ValueError):
                 pass
-        if "LAYERS_PER_CHUNK" in o:
+        if "LAYERS_PER_CHUNK" in override:
             try:
-                self._chunk_spin.setValue(int(o["LAYERS_PER_CHUNK"]))
+                self._chunk_spin.setValue(int(override["LAYERS_PER_CHUNK"]))
             except (TypeError, ValueError):
                 pass
-        if "OVERLAP_LAYERS" in o:
-            ov = o["OVERLAP_LAYERS"]
+        if "OVERLAP_LAYERS" in override:
+            ov = override["OVERLAP_LAYERS"]
             self._overlap_edit.setText("auto" if ov is None else str(ov))
-        if "APPLY_MASK" in o:
-            self._mask_check.setChecked(bool(o["APPLY_MASK"]))
-        if "ASSIGN_PARTS" in o:
-            self._assign_check.setChecked(bool(o["ASSIGN_PARTS"]))
-        if "LAYER_RANGE" in o:
-            lr = o["LAYER_RANGE"]
+        if "APPLY_MASK" in override:
+            self._mask_check.setChecked(bool(override["APPLY_MASK"]))
+        if "ASSIGN_PARTS" in override:
+            self._assign_check.setChecked(bool(override["ASSIGN_PARTS"]))
+        if "LAYER_RANGE" in override:
+            lr = override["LAYER_RANGE"]
             if lr is None:
                 self._all_layers_check.setChecked(True)
             elif isinstance(lr, (list, tuple)) and len(lr) == 2:
@@ -1117,6 +1222,26 @@ class MainWindow(QMainWindow):
                     self._layer_to_spin.setValue(int(lr[1]))
                 except (TypeError, ValueError):
                     pass
+        if "LOAD_COLUMNS" in override:
+            lc = override["LOAD_COLUMNS"]
+            if lc is None:
+                self._columns_edit.setText("all")
+            elif isinstance(lc, (list, tuple)):
+                self._columns_edit.setText(", ".join(str(c) for c in lc))
+
+        def _restore_range(key, lo_edit, hi_edit):
+            rng = override.get(key)
+            if rng is None:
+                lo_edit.setText("")
+                hi_edit.setText("")
+            elif isinstance(rng, (list, tuple)) and len(rng) == 2:
+                lo_edit.setText("" if rng[0] is None else str(rng[0]))
+                hi_edit.setText("" if rng[1] is None else str(rng[1]))
+
+        if "X_RANGE" in override:
+            _restore_range("X_RANGE", self._x_min_edit, self._x_max_edit)
+        if "Y_RANGE" in override:
+            _restore_range("Y_RANGE", self._y_min_edit, self._y_max_edit)
 
     def _current_analysis_state(self) -> dict:
         """Snapshot the live analysis setup (recipes + view/axes/settings)."""
@@ -1250,6 +1375,30 @@ class MainWindow(QMainWindow):
             lo = self._layer_from_spin.value()
             hi = self._layer_to_spin.value()
             config["LAYER_RANGE"] = (min(lo, hi), max(lo, hi))
+
+        cols_text = self._columns_edit.text().strip()
+        if not cols_text or cols_text.lower() == "all":
+            config["LOAD_COLUMNS"] = None
+        else:
+            config["LOAD_COLUMNS"] = [
+                col.strip() for col in cols_text.split(",") if col.strip()
+            ]
+
+        def _gather_range(lo_edit, hi_edit, label):
+            lo_txt = lo_edit.text().strip()
+            hi_txt = hi_edit.text().strip()
+            if not lo_txt and not hi_txt:
+                return None
+            lo = float(lo_txt) if lo_txt else float("-inf")
+            hi = float(hi_txt) if hi_txt else float("inf")
+            if lo > hi:
+                raise ValueError(
+                    f"{label} range minimum ({lo}) exceeds maximum ({hi})."
+                )
+            return (lo, hi)
+
+        config["X_RANGE"] = _gather_range(self._x_min_edit, self._x_max_edit, "X")
+        config["Y_RANGE"] = _gather_range(self._y_min_edit, self._y_max_edit, "Y")
 
         source = config["SOURCE"]
         cache_dir = Path(source) / ".cache"
@@ -1605,7 +1754,7 @@ class MainWindow(QMainWindow):
             return
         from ampm.views import ensure_user_views_dir
 
-        ensure_user_views_dir()  # create the per-user views folder on first run
+        ensure_user_views_dir()
         self._refresh_views(None)
 
     def _on_reload_views(self):
@@ -1659,7 +1808,7 @@ def main():
             os._exit(130)  # second Ctrl+C: force quit immediately
         sigint_fired = True
         print("\nInterrupt received \u2014 closing (Ctrl+C again to force quit)...")
-        window.close()  # triggers closeEvent: saves UI state, waits for threads
+        window.close()  # saves UI state, waits for threads
 
     signal.signal(signal.SIGINT, _handle_sigint)
 
