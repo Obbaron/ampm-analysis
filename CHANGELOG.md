@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-06-13
+
+Dense-build support: the full load → mask → assign → statistics pipeline now
+runs in bounded memory, letting builds of ~750M+ rows complete on a 32 GB
+machine where they previously exhausted memory. Roughly a 10x reduction in
+peak memory across the pipeline.
+
+### Added
+
+- **Columns to load.** A *Columns* field on the Config tab loads only the
+  signal columns you name (comma-separated; `all` for everything), pruned at
+  Parquet-scan time. `Demand X`/`Demand Y`/`Start time` and `layer`/`Z` are
+  always included. Remembered per build in `.ampm-ui.json`.
+- **X / Y spatial range.** Optional inclusive `Demand X` / `Demand Y` bounds
+  on the Config tab, applied at load time (one-sided bounds allowed; blank
+  loads the full plate). Remembered per build, and included in the mask-cache
+  key so changing the extent invalidates correctly.
+- Optional memory profiler (`ampm/memprof.py`): wrap pipeline stages in
+  `phase(...)` to log working-set and commit-charge readings per stage, with
+  a marker when the process peak grows inside a stage. Off by default; enable
+  with the `AMPM_MEMPROF` environment variable. Reads OS counters directly so
+  it sees native (polars/numpy/shapely) allocations.
+
+### Changed
+
+- **Streaming mask application.** `apply_mask` now tests point-in-polygon in
+  bounded chunks via `shapely.contains_xy` on raw coordinate arrays (no
+  per-row `Point` objects), with peak memory independent of build size. New
+  `apply_mask_keep` returns just the boolean keep-array for callers that
+  don't need the filtered frame materialized.
+- **Streaming mask cache.** `mask_cache` writes keys incrementally with a
+  `ParquetWriter` (uniqueness checked per layer-run), and cached loads apply
+  the keys with a sequential merge-walk over the cache file instead of a
+  whole-build hash semi-join — bounding memory and running markedly faster.
+  `mask_or_load` gains a `keep_fn` path that writes the cache straight from
+  the keep-array.
+- **Compact part assignment.** `assign_nearest_part` now emits `part_id` as a
+  `pl.Enum` (4-byte codes over the part-name categories) built directly from
+  the index buffer, and accumulates per-part distance statistics in a single
+  pass rather than per-part full-length masks. `noise` is always a category
+  when a noise label is given. The downstream power/speed attach uses a
+  direct lookup instead of a left join, avoiding a full second copy of the
+  frame.
+- **Streaming CoV.** `compute_cov` projects to only the columns it needs
+  before filtering and runs the group-by lazily with a streaming collect, so
+  derived-column statistics no longer copy the full-width frame.
+
+### Fixed
+
+- Mask-cache writes no longer fail on Windows with `PermissionError`
+  (WinError 5) when a load is immediately followed by a recompute: the cache
+  file handle is now released promptly after reading metadata, and the
+  atomic replace retries transient locks (antivirus, file indexer, cloud
+  sync, Explorer preview) before falling back, with an actionable message if
+  the file is genuinely locked.
+
 ## [1.1.2] - 2026-06-11
 
 ### Fixed
@@ -94,7 +150,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.2...HEAD
+[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.3...HEAD
+[1.1.3]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.0.0...v1.1.0
