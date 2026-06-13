@@ -20,7 +20,7 @@ help:
 setup:
 	$(SYSTEM_PYTHON) -m venv .venv
 	$(VENV_PYTHON) -m pip install --upgrade pip
-	$(VENV_PYTHON) -m pip install -e .
+	$(VENV_PYTHON) -m pip install -e ".[dev]"
 
 run:
 	$(VENV_PYTHON) app.py
