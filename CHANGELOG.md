@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-18
+
+Build and dependency hardening, plus one user-facing addition: the MeltVIEW
+melt-pool signal correction is now exposed as a toggleable parameter. The
+development and offline build/runtime environments are also pinned to a single
+Python version with capped, reproducible dependencies and a smaller offline
+footprint.
+
+### Added
+
+- **MeltVIEW melt-pool correction.** The `correction` parameter is now exposed
+  as a user-configurable setting, applying a correction to the MeltVIEW
+  melt-pool (mean) signal from the MAIN machine.
+
+### Changed
+
+- **Standardized on Python 3.11.9 (64-bit).** Development, offline source
+  install, and the compiled binary now target the same interpreter version as
+  the offline deployment machine, so version-specific wheels
+  (`cp311`/`win_amd64`) match across every environment. `requires-python`
+  remains `>=3.11`.
+- **Capped dependency versions.** All runtime and dev dependencies now carry
+  upper bounds at the next major (e.g. `numpy>=1.24,<3`, `polars>=1.0,<2`), so
+  resolves are reproducible and a future breaking major can't be pulled in
+  silently. `pyarrow` is held to its current major (`<25`), as it bumps major
+  frequently.
+- **Slimmed trimesh to base `trimesh`.** Replaced `trimesh[easy]` with plain
+  `trimesh` after confirming — by import-tracing a full app session plus the
+  test suite — that the slicing path uses only mesh loading and sectioning.
+  The unused native extras (`embreex`, `manifold3d`, `mapbox_earcut`,
+  `vhacdx`, `pycollada`, `lxml`, `pillow`, and others) are no longer bundled,
+  shrinking both the offline wheel set and the compiled binary. Slicing's real
+  dependencies — `shapely`, `networkx`, `rtree` — are retained as explicit
+  requirements.
+- Reworded the missing-dependency guard in `masking.py` to name the packages
+  the slicing path actually needs (`shapely`/`networkx`/`rtree`) and point at
+  the bundled offline wheel set, instead of a `trimesh[easy]` network install
+  that would dead-end on an air-gapped machine.
+
+### Removed
+
+- Stale trimesh-backend hidden imports (`embreex`, `manifold3d`,
+  `mapbox_earcut`, `lxml`, `svg.path`, `pycollada`) from the PyInstaller spec,
+  now that those packages are no longer installed.
+- Unused `etc/` scratch scripts, the project's only reference to `matplotlib`
+  (which was never a declared dependency).
+
+### Fixed
+
+- **Offline source install.** The bundled wheel set now includes the build
+  backend (`setuptools`, `wheel`), so installing the project from source on an
+  offline machine (`pip install --no-index --find-links`) no longer fails
+  trying to fetch the backend from PyPI.
+
 ## [1.1.3] - 2026-06-13
 
 Dense-build support: the full load → mask → assign → statistics pipeline now
@@ -150,7 +204,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.3...HEAD
+[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.0...v1.1.1

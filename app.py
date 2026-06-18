@@ -41,15 +41,39 @@ from PyQt6.QtWidgets import (
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+UI_STATE_VERSION = 2
+UI_STATE_FILENAME = ".ampm-ui.json"
+
+AVAILABLE_CORRECTIONS = {
+    ("MAIN", "MeltVIEW melt pool (mean)"): {
+        "label": "MAIN / MeltVIEW melt pool (mean)",
+    },
+}
+
+# Pipeline params the GUI may edit
+_OVERLAY_KEYS = (
+    "LAYER_THICKNESS",
+    "METHOD",
+    "MAX_DISTANCE_MM",
+    "EPS_XY",
+    "EPS_Z",
+    "MIN_SAMPLES",
+    "LAYERS_PER_CHUNK",
+    "OVERLAP_LAYERS",
+    "APPLY_MASK",
+    "ASSIGN_PARTS",
+    "LAYER_RANGE",
+    "LOAD_COLUMNS",
+    "X_RANGE",
+    "Y_RANGE",
+    "APPLY_CORRECTION",
+    "CORRECTION_MACHINE",
+    "CORRECTION_COLUMN",
+)
+
 
 class NoScrollComboBox(QComboBox):
-    """A combo box that ignores wheel events.
-
-    By default a QComboBox cycles through its options when the mouse wheel is
-    scrolled over it, which makes it easy to change a selection by accident
-    while scrolling the page. Ignoring the wheel event stops that and lets the
-    event propagate to the parent scroll area, so scrolling still moves the page.
-    """
+    """A combo box that ignores wheel events."""
 
     def wheelEvent(self, e):  # noqa: N802 (Qt naming)
         if e is not None:
@@ -149,26 +173,18 @@ def _layer_range_tag(layer_range) -> str:
     return f"L{lo:05d}-{hi:05d}"
 
 
-UI_STATE_VERSION = 1
-UI_STATE_FILENAME = ".ampm-ui.json"
+def _correction_machines():
+    """Distinct machines that have at least one calibrated correction."""
+    seen = []
+    for machine, _ in AVAILABLE_CORRECTIONS:
+        if machine not in seen:
+            seen.append(machine)
+    return seen
 
-# Pipeline params the GUI may edit
-_OVERLAY_KEYS = (
-    "LAYER_THICKNESS",
-    "METHOD",
-    "MAX_DISTANCE_MM",
-    "EPS_XY",
-    "EPS_Z",
-    "MIN_SAMPLES",
-    "LAYERS_PER_CHUNK",
-    "OVERLAP_LAYERS",
-    "APPLY_MASK",
-    "ASSIGN_PARTS",
-    "LAYER_RANGE",
-    "LOAD_COLUMNS",
-    "X_RANGE",
-    "Y_RANGE",
-)
+
+def _correction_columns(machine):
+    """Columns with a calibrated correction for the given machine."""
+    return [col for (m, col) in AVAILABLE_CORRECTIONS if m == machine]
 
 
 def _ui_state_path(project_root) -> Path:
@@ -314,6 +330,9 @@ class LoadWorker(QThread):
         MAX_DISTANCE_MM = config["MAX_DISTANCE_MM"]
         APPLY_MASK = config.get("APPLY_MASK", True)
         ASSIGN_PARTS = config.get("ASSIGN_PARTS", True)
+        APPLY_CORRECTION = config.get("APPLY_CORRECTION", False)
+        CORRECTION_MACHINE = config.get("CORRECTION_MACHINE")
+        CORRECTION_COLUMN = config.get("CORRECTION_COLUMN")
         LAYER_RANGE = config.get("LAYER_RANGE")  # None or (lo, hi)
         LOAD_COLUMNS = config.get("LOAD_COLUMNS")  # None or [cols]
         X_RANGE = config.get("X_RANGE")  # None or (min, max)
@@ -511,6 +530,31 @@ class LoadWorker(QThread):
         else:
             print("Skipping part assignment.")
 
+        if APPLY_CORRECTION:
+            key = (CORRECTION_MACHINE, CORRECTION_COLUMN)
+            if key not in AVAILABLE_CORRECTIONS:
+                print(
+                    f"No correction calibrated for machine "
+                    f"{CORRECTION_MACHINE!r} / column {CORRECTION_COLUMN!r}; "
+                    f"skipping correction."
+                )
+            else:
+                from ampm.correction import MeltPoolCorrection
+
+                print(
+                    f"Applying correction: {CORRECTION_MACHINE} / "
+                    f"{CORRECTION_COLUMN}..."
+                )
+                try:
+                    df = MeltPoolCorrection().apply(df, meltpool_col=CORRECTION_COLUMN)
+                    print(f"Added '{CORRECTION_COLUMN} corrected' column.")
+                except KeyError as e:
+                    print(
+                        f"Correction skipped: required column missing ({e}). "
+                        f"The correction needs Demand X/Y, LaserVIEW (mean), "
+                        f"and {CORRECTION_COLUMN!r}."
+                    )
+
         print(f"Data ready: {df.height:,} rows, {len(df.columns)} columns.")
         self._emit_progress(100, "Ready")
         return df
@@ -674,6 +718,30 @@ class MainWindow(QMainWindow):
         self._cluster_widget.setVisible(False)
         assign_layout.addWidget(self._cluster_widget)
 
+        # Correction
+        self._correction_group = QWidget()
+        correction_layout = QVBoxLayout(self._correction_group)
+        correction_layout.setContentsMargins(0, 0, 0, 0)
+
+        machine_row = QHBoxLayout()
+        machine_row.addWidget(QLabel("Machine:"))
+        self._correction_machine_combo = NoScrollComboBox()
+        self._correction_machine_combo.addItems(_correction_machines())
+        self._correction_machine_combo.currentTextChanged.connect(
+            self._on_correction_machine_changed
+        )
+        machine_row.addWidget(self._correction_machine_combo, stretch=1)
+        correction_layout.addLayout(machine_row)
+
+        column_row = QHBoxLayout()
+        column_row.addWidget(QLabel("Column:"))
+        self._correction_column_combo = NoScrollComboBox()
+        column_row.addWidget(self._correction_column_combo, stretch=1)
+        correction_layout.addLayout(column_row)
+        self._on_correction_machine_changed(
+            self._correction_machine_combo.currentText()
+        )
+
         settings_group = QGroupBox("Settings")
         settings_layout = QVBoxLayout(settings_group)
 
@@ -777,6 +845,18 @@ class MainWindow(QMainWindow):
         settings_layout.addWidget(self._assign_check)
 
         settings_layout.addWidget(self._assign_group)
+
+        self._correction_check = QCheckBox("Correction")
+        self._correction_check.setChecked(False)
+        self._correction_check.setToolTip(
+            "Apply a pre-fitted spatial correction to a sensor signal, adding "
+            "a corrected column alongside the original."
+        )
+        self._correction_check.toggled.connect(self._correction_group.setVisible)
+        settings_layout.addWidget(self._correction_check)
+
+        self._correction_group.setVisible(False)
+        settings_layout.addWidget(self._correction_group)
 
         config_layout.addWidget(settings_group)
 
@@ -963,6 +1043,14 @@ class MainWindow(QMainWindow):
 
     def _on_method_changed(self, method):
         self._cluster_widget.setVisible(method == "dbscan")
+
+    def _on_correction_machine_changed(self, machine):
+        current = self._correction_column_combo.currentText()
+        self._correction_column_combo.clear()
+        columns = _correction_columns(machine)
+        self._correction_column_combo.addItems(columns)
+        if current in columns:
+            self._correction_column_combo.setCurrentText(current)
 
     def _on_all_layers_toggled(self, all_layers: bool) -> None:
         self._layer_range_widget.setEnabled(not all_layers)
@@ -1211,6 +1299,17 @@ class MainWindow(QMainWindow):
             self._mask_check.setChecked(bool(override["APPLY_MASK"]))
         if "ASSIGN_PARTS" in override:
             self._assign_check.setChecked(bool(override["ASSIGN_PARTS"]))
+        if "CORRECTION_MACHINE" in override:
+            machine = override["CORRECTION_MACHINE"]
+            if machine in _correction_machines():
+                self._correction_machine_combo.setCurrentText(machine)
+        if "CORRECTION_COLUMN" in override:
+            column = override["CORRECTION_COLUMN"]
+            idx = self._correction_column_combo.findText(column)
+            if idx >= 0:
+                self._correction_column_combo.setCurrentIndex(idx)
+        if "APPLY_CORRECTION" in override:
+            self._correction_check.setChecked(bool(override["APPLY_CORRECTION"]))
         if "LAYER_RANGE" in override:
             lr = override["LAYER_RANGE"]
             if lr is None:
@@ -1368,6 +1467,9 @@ class MainWindow(QMainWindow):
 
         config["APPLY_MASK"] = self._mask_check.isChecked()
         config["ASSIGN_PARTS"] = self._assign_check.isChecked()
+        config["APPLY_CORRECTION"] = self._correction_check.isChecked()
+        config["CORRECTION_MACHINE"] = self._correction_machine_combo.currentText()
+        config["CORRECTION_COLUMN"] = self._correction_column_combo.currentText()
 
         if self._all_layers_check.isChecked():
             config["LAYER_RANGE"] = None

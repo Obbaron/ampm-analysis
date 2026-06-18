@@ -152,10 +152,16 @@ def _slice_trimesh(
             polys = list(section.polygons_full)
         except ModuleNotFoundError as e:
             raise ModuleNotFoundError(
-                f"trimesh is missing an optional dependency required for "
-                f"slicing: {e.name}. Install everything trimesh needs with:\n"
-                f'    pip install "trimesh[easy]"\n'
-                f"or install the missing module directly: pip install {e.name}"
+                f"Slicing needs a trimesh support package that is not "
+                f"installed: {e.name!r}. The slicing path "
+                f"(section.polygons_full) relies on shapely, networkx and "
+                f"rtree, which are pinned project dependencies and should "
+                f"already be present.\n"
+                f"To repair the environment offline, reinstall from the "
+                f"bundled wheel set (no network needed):\n"
+                f"    pip install --no-index --find-links wheels\\windows {e.name}\n"
+                f"or re-run the project offline install to restore all "
+                f"dependencies."
             ) from e
         if not polys:
             continue
