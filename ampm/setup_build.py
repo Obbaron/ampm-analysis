@@ -40,7 +40,7 @@ def _find_source_dir(build_dir: Path) -> Path:
         )
     if len(candidates) > 1:
         raise ValueError(
-            f"Packet data files found in multiple directories:\n"
+            "Packet data files found in multiple directories:\n"
             + "\n".join(f"  {c}" for c in sorted(candidates))
         )
     return candidates.pop()
@@ -110,7 +110,7 @@ def _find_parts_csv(build_dir: Path) -> Path:
     if len(csvs) == 1:
         return csvs[0]
 
-    quantam_csvs = [part for part in csvs if _is_quantam_csv(p)]
+    quantam_csvs = [part for part in csvs if _is_quantam_csv(part)]
 
     if len(quantam_csvs) == 1:
         return quantam_csvs[0]
@@ -120,8 +120,8 @@ def _find_parts_csv(build_dir: Path) -> Path:
             f"have the QuantAM header."
         )
     raise ValueError(
-        f"Found {len(quantam_csvs)} CSVs with the QuantAM header:\n"
-        + "\n".join(f"  {col}" for col in quantam_csvs)
+        f"Found {len(quantam_csvs)} CSVs with the QuantAM header:"
+        + "\n".join(f"  {path}" for path in quantam_csvs)
         + "\nCannot determine which is the parts file."
     )
 

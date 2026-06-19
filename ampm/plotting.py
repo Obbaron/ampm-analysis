@@ -199,7 +199,7 @@ def scatter3d(
         if color_range is not None:
             marker["cmin"], marker["cmax"] = color_range
 
-    fig = go.Figure(
+    fig: go.Figure = go.Figure(
         data=[
             go.Scatter3d(
                 x=df[x].to_list(),

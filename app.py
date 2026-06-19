@@ -602,6 +602,9 @@ class LoadWorker(QThread):
             print("Skipping part assignment.")
 
         if APPLY_CORRECTION:
+            if CORRECTION_COLUMN is None:
+                raise ValueError("CORRECTION_COLUMN not set.")
+
             key = (CORRECTION_MACHINE, CORRECTION_COLUMN)
             if key not in AVAILABLE_CORRECTIONS:
                 print(
@@ -1221,7 +1224,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_part_list"):
             return out
         for i in range(self._part_list.count()):
-            item = self._part_list.item(i)
+            item = cast(QListWidgetItem, self._part_list.item(i))
             if item.checkState() != Qt.CheckState.Checked:
                 out.add(str(item.data(Qt.ItemDataRole.UserRole)))
         return out
@@ -1230,7 +1233,7 @@ class MainWindow(QMainWindow):
         state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
         self._part_list.blockSignals(True)
         for i in range(self._part_list.count()):
-            self._part_list.item(i).setCheckState(state)
+            cast(QListWidgetItem, self._part_list.item(i)).setCheckState(state)
         self._part_list.blockSignals(False)
         self._update_part_filter_status()
 
@@ -1239,7 +1242,7 @@ class MainWindow(QMainWindow):
         wanted = {str(p) for p in (excluded or [])}
         self._part_list.blockSignals(True)
         for i in range(self._part_list.count()):
-            item = self._part_list.item(i)
+            item = cast(QListWidgetItem, self._part_list.item(i))
             pid = str(item.data(Qt.ItemDataRole.UserRole))
             item.setCheckState(
                 Qt.CheckState.Unchecked if pid in wanted else Qt.CheckState.Checked
