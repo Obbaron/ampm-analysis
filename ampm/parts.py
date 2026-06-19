@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 from collections import Counter
 from pathlib import Path
 from typing import Iterator
@@ -360,6 +361,139 @@ class QuantAMParts:
                 / pl.col("Hatches Exposure Time")
                 * 1000.0
             ).alias("Hatch Speed")
+        )
+
+
+_DHXML_PARTS_PATH = ("version1", "build", "parts")
+
+
+def _parse_bounding_box(value: str | list) -> tuple[float, ...]:
+    """Parse a ``"xmin,ymin,zmin,xmax,ymax,zmax"`` box, normalised min<=max."""
+    fields = value.split(",") if isinstance(value, str) else list(value)
+    if len(fields) != 6:
+        raise ValueError(f"expected 6 comma-separated numbers, got {value!r}")
+    xmin, ymin, zmin, xmax, ymax, zmax = (float(v) for v in fields)
+    return (
+        min(xmin, xmax),
+        min(ymin, ymax),
+        min(zmin, zmax),
+        max(xmin, xmax),
+        max(ymin, ymax),
+        max(zmin, zmax),
+    )
+
+
+def _suffix_duplicate_names(parts: list[dict]) -> list[dict]:
+    """Add a unique ``part_id`` per part, suffixing repeated names ``name#n``."""
+    counts = Counter(p["name"] for p in parts)
+    seen: Counter = Counter()
+    out: list[dict] = []
+    for p in parts:
+        name = p["name"]
+        if counts[name] > 1:
+            seen[name] += 1
+            part_id = f"{name}#{seen[name]}"
+        else:
+            part_id = name
+        out.append({**p, "part_id": part_id})
+    return out
+
+
+class BuildStartedDHXML:
+    """A Renishaw "BuildStarted" ``.dhxml`` file (JSON despite the extension).
+
+    Exposes the per-part names and 3D bounding boxes the RenAM 500S records
+    alongside the build, via :meth:`parts_table`. Repeated part names are made
+    unique by suffixing ``name#n`` in file order (see ``_suffix_duplicate_names``).
+    """
+
+    def __init__(
+        self,
+        parts: list[dict],
+        raw: dict | None = None,
+        path: Path | None = None,
+    ) -> None:
+        self._parts = parts
+        self._raw = raw
+        self.path = path
+
+    @classmethod
+    def from_path(cls, path: str | Path) -> "BuildStartedDHXML":
+        """Load and parse a BuildStarted ``.dhxml`` file."""
+        path = Path(path)
+        if not path.is_file():
+            raise FileNotFoundError(f"BuildStarted DHXML not found:\n{path}")
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"{path} is not valid JSON; is this a BuildStarted DHXML? ({e})"
+            ) from e
+
+        node = raw
+        for key in _DHXML_PARTS_PATH:
+            if not isinstance(node, dict) or key not in node:
+                raise ValueError(
+                    f"{path} is not a recognized BuildStarted DHXML: "
+                    f"missing {'/'.join(_DHXML_PARTS_PATH)!r}."
+                )
+            node = node[key]
+        if not isinstance(node, list) or not node:
+            raise ValueError(f"No parts listed in {path}.")
+
+        parsed: list[dict] = []
+        for i, entry in enumerate(node):
+            try:
+                name = str(entry["name"])
+                bbox = _parse_bounding_box(entry["boundingBox"])
+            except (KeyError, TypeError, ValueError) as e:
+                raise ValueError(
+                    f"Malformed part entry #{i} in {path}: {entry!r} ({e})"
+                ) from e
+            parsed.append({"name": name, "bbox": bbox})
+
+        return cls(_suffix_duplicate_names(parsed), raw=raw, path=path)
+
+    @property
+    def part_names(self) -> list[str]:
+        """Original (pre-suffix) part names, in file order."""
+        return [p["name"] for p in self._parts]
+
+    def __len__(self) -> int:
+        return len(self._parts)
+
+    def __repr__(self) -> str:
+        path = f", path={self.path!s}" if self.path else ""
+        return f"BuildStartedDHXML(parts={len(self._parts)}{path})"
+
+    def parts_table(self) -> pl.DataFrame:
+        """One row per part: ``Part ID``, box corners ``{X,Y,Z} {min,max}``,
+        and XY-centre ``X Position`` / ``Y Position`` (named to match
+        ``QuantAMParts.parent_parts``)."""
+        pid, xmin, ymin, zmin, xmax, ymax, zmax = ([] for _ in range(7))
+        for p in self._parts:
+            a, b, c, d, e, f = p["bbox"]
+            pid.append(p["part_id"])
+            xmin.append(a)
+            ymin.append(b)
+            zmin.append(c)
+            xmax.append(d)
+            ymax.append(e)
+            zmax.append(f)
+
+        return pl.DataFrame(
+            {
+                "Part ID": pl.Series(pid, dtype=pl.String),
+                "X min": pl.Series(xmin, dtype=pl.Float64),
+                "Y min": pl.Series(ymin, dtype=pl.Float64),
+                "Z min": pl.Series(zmin, dtype=pl.Float64),
+                "X max": pl.Series(xmax, dtype=pl.Float64),
+                "Y max": pl.Series(ymax, dtype=pl.Float64),
+                "Z max": pl.Series(zmax, dtype=pl.Float64),
+            }
+        ).with_columns(
+            ((pl.col("X min") + pl.col("X max")) / 2.0).alias("X Position"),
+            ((pl.col("Y min") + pl.col("Y max")) / 2.0).alias("Y Position"),
         )
 
 
@@ -791,5 +925,165 @@ def assign_nearest_part(
                 f"distance mean={dist_sums[i] / n:.2f} mm, "
                 f"max={dist_maxs[i]:.2f} mm"
             )
+
+    return out
+
+
+def assign_bounding_box_part(
+    masked: pl.DataFrame,
+    parts_table: pl.DataFrame,
+    *,
+    x_col: str = "Demand X",
+    y_col: str = "Demand Y",
+    z_col: str = "Z",
+    parts_id_col: str = "Part ID",
+    xmin_col: str = "X min",
+    ymin_col: str = "Y min",
+    zmin_col: str = "Z min",
+    xmax_col: str = "X max",
+    ymax_col: str = "Y max",
+    zmax_col: str = "Z max",
+    part_id_col: str = "part_id",
+    use_z: bool = False,
+    noise_label: str | None = "noise",
+    verbose: bool = True,
+) -> pl.DataFrame:
+    """Assign each row to the part whose bounding box contains it.
+
+    XY containment by default; ``use_z`` also checks the Z span. Rows inside no
+    box are labelled ``noise_label`` (or null) rather than forced onto a part,
+    so a caller can fall back to ``assign_nearest_part``/DBSCAN for them. On
+    overlap the nearest box centre wins. Chunked over rows for bounded memory.
+
+    Parameters
+    ----------
+    masked : pl.DataFrame
+        Needs ``x_col``, ``y_col`` (and ``z_col`` if ``use_z``).
+    parts_table : pl.DataFrame
+        ``parts_id_col`` plus the box-corner columns, e.g.
+        ``BuildStartedDHXML.parts_table()``.
+    use_z : bool, default False
+        Also require ``z_col`` within ``[zmin_col, zmax_col]``.
+    noise_label : str or None, default "noise"
+        Label for rows inside no box; ``None`` leaves them null.
+
+    Returns
+    -------
+    pl.DataFrame
+        ``masked`` with ``part_id_col`` added (``pl.Enum``).
+    """
+    needed_masked = [x_col, y_col] + ([z_col] if use_z else [])
+    for c in needed_masked:
+        if c not in masked.columns:
+            raise KeyError(f"Column {c!r} not in masked DataFrame")
+    needed_parts = [parts_id_col, xmin_col, ymin_col, xmax_col, ymax_col]
+    if use_z:
+        needed_parts += [zmin_col, zmax_col]
+    for c in needed_parts:
+        if c not in parts_table.columns:
+            raise KeyError(f"Column {c!r} not in parts_table")
+    if parts_table.is_empty():
+        raise ValueError("parts_table is empty")
+
+    n_parts = parts_table.height
+    part_ids = parts_table[parts_id_col].to_list()
+    xmin = parts_table[xmin_col].to_numpy().astype(np.float64)
+    ymin = parts_table[ymin_col].to_numpy().astype(np.float64)
+    xmax = parts_table[xmax_col].to_numpy().astype(np.float64)
+    ymax = parts_table[ymax_col].to_numpy().astype(np.float64)
+    if use_z:
+        zmin = parts_table[zmin_col].to_numpy().astype(np.float64)
+        zmax = parts_table[zmax_col].to_numpy().astype(np.float64)
+    cx = (xmin + xmax) / 2.0
+    cy = (ymin + ymax) / 2.0
+
+    x = masked[x_col].to_numpy()
+    y = masked[y_col].to_numpy()
+    z = masked[z_col].to_numpy() if use_z else None
+    n_rows = x.shape[0]
+
+    categories = [str(p) for p in part_ids]
+    noise_code: int | None = None
+    if noise_label is not None:
+        if noise_label not in categories:
+            categories.append(noise_label)
+        noise_code = categories.index(noise_label)
+
+    codes = np.zeros(n_rows, dtype=np.uint32)
+    unassigned = np.zeros(n_rows, dtype=bool) if noise_label is None else None
+    counts = np.zeros(n_parts, dtype=np.int64)
+    n_unassigned = 0
+
+    target_bytes = 128 * 1024 * 1024  # 128 MB
+    chunk = max(1, int(min(n_rows, max(1, target_bytes // (max(n_parts, 1) * 8)))))
+
+    for start in range(0, n_rows, chunk):
+        stop = min(start + chunk, n_rows)
+        xs = x[start:stop]
+        ys = y[start:stop]
+        zs = z[start:stop] if use_z else None
+        m = stop - start
+
+        best_code = np.zeros(m, dtype=np.uint32)
+        best_dist2 = np.full(m, np.inf)
+        any_inside = np.zeros(m, dtype=bool)
+
+        for j in range(n_parts):
+            inside = (
+                (xs >= xmin[j]) & (xs <= xmax[j]) & (ys >= ymin[j]) & (ys <= ymax[j])
+            )
+            if use_z:
+                inside &= (zs >= zmin[j]) & (zs <= zmax[j])
+            if not inside.any():
+                continue
+            d2 = (xs - cx[j]) ** 2 + (ys - cy[j]) ** 2
+            take = inside & (d2 < best_dist2)
+            best_code[take] = j
+            best_dist2[take] = d2[take]
+            any_inside |= inside
+
+        inside_idx = best_code[any_inside]
+        if inside_idx.size:
+            counts += np.bincount(inside_idx, minlength=n_parts)
+
+        if not any_inside.all():
+            miss = ~any_inside
+            n_unassigned += int(miss.sum())
+            if noise_code is not None:
+                best_code[miss] = noise_code
+            else:
+                unassigned[start:stop] = miss
+        codes[start:stop] = best_code
+
+    if n_unassigned and verbose:
+        pct = n_unassigned / n_rows if n_rows else 0.0
+        print(
+            f"[assign_bounding_box_part] {n_unassigned:,} row(s) "
+            f"({pct:.1%}) fell outside every part bounding box "
+            f"\u2192 labelled {noise_label!r}"
+        )
+
+    dict_arr = pa.DictionaryArray.from_arrays(pa.array(codes), pa.array(categories))
+    part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
+        pl.Enum(categories)
+    )
+    if noise_label is None and n_unassigned > 0:
+        part_series = pl.DataFrame({part_id_col: part_series, "_u": unassigned}).select(
+            pl.when(pl.col("_u"))
+            .then(None)
+            .otherwise(pl.col(part_id_col))
+            .alias(part_id_col)
+        )[part_id_col]
+
+    out = masked.with_columns(part_series)
+
+    if verbose:
+        dims = "XYZ" if use_z else "XY"
+        print(
+            f"[assign_bounding_box_part] Assigned {n_rows:,} rows to "
+            f"{n_parts} part(s) by {dims} bounding box:"
+        )
+        for i, pid in enumerate(part_ids):
+            print(f"  {pid}: {int(counts[i]):>9,} rows")
 
     return out

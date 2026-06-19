@@ -26,6 +26,7 @@ from PyQt6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QProgressBar,
     QPushButton,
@@ -62,6 +63,8 @@ _OVERLAY_KEYS = (
     "OVERLAP_LAYERS",
     "APPLY_MASK",
     "ASSIGN_PARTS",
+    "DHXML",
+    "PART_EXCLUDE",
     "LAYER_RANGE",
     "LOAD_COLUMNS",
     "X_RANGE",
@@ -259,6 +262,10 @@ class CollapsibleSection(QWidget):
         """The layout callers should add their rows/widgets to."""
         return self._content_layout
 
+    def set_title(self, title: str) -> None:
+        """Update the header text (e.g. to reflect a summary/count)."""
+        self._toggle.setText(title)
+
 
 class LoadWorker(QThread):
     """Loads, masks, and assigns data in a background thread."""
@@ -312,8 +319,10 @@ class LoadWorker(QThread):
         from ampm.masking import apply_mask_keep, build_mask, stl_hash
         from ampm.memprof import phase
         from ampm.parts import (
+            BuildStartedDHXML,
             QuantAMParts,
             apply_part_id_map,
+            assign_bounding_box_part,
             assign_nearest_part,
             compute_part_id_map,
         )
@@ -322,6 +331,8 @@ class LoadWorker(QThread):
         SOURCE = config["SOURCE"]
         STL = config["STL"]
         PARTS_CSV = config["PARTS_CSV"]
+        DHXML = config.get("DHXML") or None
+        PART_EXCLUDE = config.get("PART_EXCLUDE") or None
         LAYER_THICKNESS = config["LAYER_THICKNESS"]
         MASK_CACHE = config["MASK_CACHE"]
         MASK_KEEP_CACHE = config["MASK_KEEP_CACHE"]
@@ -438,11 +449,30 @@ class LoadWorker(QThread):
         if ASSIGN_PARTS:
             if assign_band is not None:
                 self._emit_progress(assign_band[0], "Assigning parts")
-            quantam = QuantAMParts.from_path(PARTS_CSV)
-            parts_table = quantam.parent_parts()
-            print(f"Loaded {parts_table.height} parts.\n")
 
-            if METHOD == "direct":
+            quantam = QuantAMParts.from_path(PARTS_CSV) if PARTS_CSV else None
+
+            if METHOD == "dhxml":
+                if not DHXML:
+                    raise ValueError(
+                        "Method 'dhxml' requires a BuildStarted DHXML "
+                        "(.dhxml) but none is set."
+                    )
+                print("Assigning parts (dhxml bounding boxes)...")
+                build_file = BuildStartedDHXML.from_path(DHXML)
+                parts_table = build_file.parts_table()
+                print(f"Loaded {parts_table.height} parts from BuildStarted DHXML.\n")
+                with phase("assign: assign_bounding_box_part"):
+                    df = assign_bounding_box_part(
+                        df,
+                        parts_table,
+                        noise_label="noise",
+                    )
+            elif METHOD == "direct":
+                if quantam is None:
+                    raise ValueError("Method 'direct' requires a Parts CSV.")
+                parts_table = quantam.parent_parts()
+                print(f"Loaded {parts_table.height} parts.\n")
                 print("Assigning parts (direct)...")
                 with phase("assign: assign_nearest_part"):
                     df = assign_nearest_part(
@@ -452,6 +482,10 @@ class LoadWorker(QThread):
                         noise_label="noise",
                     )
             else:
+                if quantam is None:
+                    raise ValueError("Method 'dbscan' requires a Parts CSV.")
+                parts_table = quantam.parent_parts()
+                print(f"Loaded {parts_table.height} parts.\n")
                 EPS_XY = config["EPS_XY"]
                 EPS_Z = config["EPS_Z"]
                 MIN_SAMPLES = config["MIN_SAMPLES"]
@@ -495,36 +529,76 @@ class LoadWorker(QThread):
                 mapping = compute_part_id_map(clustered, parts_table)
                 df = apply_part_id_map(clustered, mapping, noise_label="noise")
 
-            parts_with_speed = quantam.volume_parameters_with_speed()
-            with phase("assign: attach power/speed (lookup)"):
-                _ids = parts_with_speed["Part ID"].to_list()
-                _power = dict(zip(_ids, parts_with_speed["Hatches Power"].to_list()))
-                _speed = dict(zip(_ids, parts_with_speed["Hatch Speed"].to_list()))
-                _pid_dtype = df["part_id"].dtype
-                if isinstance(_pid_dtype, pl.Enum) and df["part_id"].null_count() == 0:
-                    import numpy as np
+            if quantam is not None:
+                try:
+                    parts_with_speed = quantam.volume_parameters_with_speed()
+                except Exception as e:
+                    print(f"Skipping power/speed attachment: {e}")
+                    parts_with_speed = None
+                if parts_with_speed is not None:
+                    with phase("assign: attach power/speed (lookup)"):
+                        _ids = parts_with_speed["Part ID"].to_list()
+                        _power = dict(
+                            zip(_ids, parts_with_speed["Hatches Power"].to_list())
+                        )
+                        _speed = dict(
+                            zip(_ids, parts_with_speed["Hatch Speed"].to_list())
+                        )
+                        _pid_dtype = df["part_id"].dtype
+                        if (
+                            isinstance(_pid_dtype, pl.Enum)
+                            and df["part_id"].null_count() == 0
+                        ):
+                            import numpy as np
 
-                    _cats = _pid_dtype.categories.to_list()
-                    _phys = df["part_id"].to_physical().to_numpy()
-                    _pw = np.array(
-                        [_power.get(c, np.nan) for c in _cats], dtype=np.float32
+                            _cats = _pid_dtype.categories.to_list()
+                            _phys = df["part_id"].to_physical().to_numpy()
+                            _pw = np.array(
+                                [_power.get(c, np.nan) for c in _cats],
+                                dtype=np.float32,
+                            )
+                            _sp = np.array(
+                                [_speed.get(c, np.nan) for c in _cats],
+                                dtype=np.float32,
+                            )
+                            df = df.with_columns(
+                                pl.Series("Hatches Power", _pw[_phys]).fill_nan(None),
+                                pl.Series("Hatch Speed", _sp[_phys]).fill_nan(None),
+                            )
+                        else:  # String part_id (e.g. DBSCAN path)
+                            df = df.with_columns(
+                                pl.col("part_id")
+                                .replace_strict(
+                                    _power, default=None, return_dtype=pl.Float64
+                                )
+                                .alias("Hatches Power"),
+                                pl.col("part_id")
+                                .replace_strict(
+                                    _speed, default=None, return_dtype=pl.Float64
+                                )
+                                .alias("Hatch Speed"),
+                            )
+            else:
+                print("No Parts CSV provided; skipping power/speed attachment.")
+
+            # Drop excluded parts after assignment (so exclusion can't pull
+            # rows onto a neighbour). String compare covers Enum and String
+            # part_id; "noise" rows are never dropped.
+            if PART_EXCLUDE and "part_id" in df.columns:
+                exclude = [str(p) for p in PART_EXCLUDE]
+                before = df.height
+                df = df.filter(~pl.col("part_id").cast(pl.String).is_in(exclude))
+                dropped = before - df.height
+                print(
+                    f"Part filter: excluded {len(exclude)} part(s); "
+                    f"{dropped:,} row(s) dropped, {df.height:,} remain."
+                )
+                if df.is_empty():
+                    print(
+                        "Warning: the part filter removed every row. Check "
+                        "which parts are ticked in the Part filter section."
                     )
-                    _sp = np.array(
-                        [_speed.get(c, np.nan) for c in _cats], dtype=np.float32
-                    )
-                    df = df.with_columns(
-                        pl.Series("Hatches Power", _pw[_phys]).fill_nan(None),
-                        pl.Series("Hatch Speed", _sp[_phys]).fill_nan(None),
-                    )
-                else:  # String part_id (e.g. DBSCAN path)
-                    df = df.with_columns(
-                        pl.col("part_id")
-                        .replace_strict(_power, default=None, return_dtype=pl.Float64)
-                        .alias("Hatches Power"),
-                        pl.col("part_id")
-                        .replace_strict(_speed, default=None, return_dtype=pl.Float64)
-                        .alias("Hatch Speed"),
-                    )
+
             if assign_band is not None:
                 self._emit_progress(assign_band[1], "Assigned")
         else:
@@ -667,6 +741,11 @@ class MainWindow(QMainWindow):
         self._csv_edit = self._make_path_row(
             paths_layout, "Parts CSV:", file_filter="CSV files (*.csv)"
         )
+        self._dhxml_edit = self._make_path_row(
+            paths_layout,
+            "BuildStarted DHXML:",
+            file_filter="BuildStarted DHXML (*.dhxml)",
+        )
 
         self._source_edit.textChanged.connect(self._probe_layers)
 
@@ -680,19 +759,21 @@ class MainWindow(QMainWindow):
         method_row = QHBoxLayout()
         method_row.addWidget(QLabel("Method:"))
         self._method_combo = NoScrollComboBox()
-        self._method_combo.addItems(["direct", "dbscan"])
+        self._method_combo.addItems(["direct", "dbscan", "dhxml"])
         self._method_combo.currentTextChanged.connect(self._on_method_changed)
         method_row.addWidget(self._method_combo, stretch=1)
         assign_layout.addLayout(method_row)
 
-        dist_row = QHBoxLayout()
+        self._dist_widget = QWidget()
+        dist_row = QHBoxLayout(self._dist_widget)
+        dist_row.setContentsMargins(0, 0, 0, 0)
         dist_row.addWidget(QLabel("Max distance (mm):"))
         self._max_dist_edit = QLineEdit("none")
         self._max_dist_edit.setToolTip(
             "'none' assigns every row regardless of distance"
         )
         dist_row.addWidget(self._max_dist_edit, stretch=1)
-        assign_layout.addLayout(dist_row)
+        assign_layout.addWidget(self._dist_widget)
 
         # DBSCAN params
         self._cluster_widget = QWidget()
@@ -717,6 +798,49 @@ class MainWindow(QMainWindow):
 
         self._cluster_widget.setVisible(False)
         assign_layout.addWidget(self._cluster_widget)
+
+        self._dhxml_hint = QLabel(
+            "Uses the part bounding boxes in the BuildStarted DHXML "
+            "(set 'BuildStarted DHXML' above). Points outside every box are "
+            "labelled 'noise' \u2014 switch to 'direct' or 'dbscan' to catch them."
+        )
+        self._dhxml_hint.setWordWrap(True)
+        self._dhxml_hint.setVisible(False)
+        assign_layout.addWidget(self._dhxml_hint)
+
+        # Parts filter
+        self._part_filter_section = CollapsibleSection("Part filter", expanded=False)
+        pf_layout = self._part_filter_section.content_layout()
+
+        pf_hint = QLabel(
+            "Untick parts to drop them from the analysis (e.g. parts a "
+            "colleague placed on the same plate). Unassigned 'noise' rows are "
+            "kept regardless."
+        )
+        pf_hint.setWordWrap(True)
+        pf_layout.addWidget(pf_hint)
+
+        pf_btn_row = QHBoxLayout()
+        self._pf_all_btn = QPushButton("Select all")
+        self._pf_none_btn = QPushButton("Select none")
+        self._pf_all_btn.clicked.connect(lambda: self._set_all_parts_checked(True))
+        self._pf_none_btn.clicked.connect(lambda: self._set_all_parts_checked(False))
+        pf_btn_row.addWidget(self._pf_all_btn)
+        pf_btn_row.addWidget(self._pf_none_btn)
+        pf_btn_row.addStretch()
+        pf_layout.addLayout(pf_btn_row)
+
+        self._part_list = QListWidget()
+        self._part_list.setMaximumHeight(180)
+        self._part_list.itemChanged.connect(self._on_part_item_changed)
+        pf_layout.addWidget(self._part_list)
+
+        self._pf_status = QLabel("No parts loaded.")
+        self._pf_status.setWordWrap(True)
+        self._pf_status.setStyleSheet("color: gray;")
+        pf_layout.addWidget(self._pf_status)
+
+        assign_layout.addWidget(self._part_filter_section)
 
         # Correction
         self._correction_group = QWidget()
@@ -980,6 +1104,9 @@ class MainWindow(QMainWindow):
 
         for edit in (self._source_edit, self._stl_edit, self._csv_edit, self._lt_edit):
             edit.textChanged.connect(self._update_load_enabled)
+        self._dhxml_edit.textChanged.connect(self._update_load_enabled)
+        self._csv_edit.textChanged.connect(self._repopulate_part_filter)
+        self._dhxml_edit.textChanged.connect(self._repopulate_part_filter)
         self._mask_check.toggled.connect(self._update_load_enabled)
         self._assign_check.toggled.connect(self._update_load_enabled)
 
@@ -1023,6 +1150,130 @@ class MainWindow(QMainWindow):
         parent_layout.addLayout(row)
         return edit
 
+    def _find_dhxml(self, source_dir: str) -> str:
+        """First ``*.dhxml`` in the source dir or project root, else ""."""
+        candidates: list[Path] = []
+        for d in (source_dir, self._project_root):
+            if d and Path(d).is_dir():
+                candidates.extend(sorted(Path(d).glob("*.dhxml")))
+        return str(candidates[0]) if candidates else ""
+
+    def _read_parts_for_filter(self, method: str):
+        """``(rows, error)`` with ``rows = [(part_id, x, y), ...]``, parsed from
+        the method's parts file. IDs match those assignment produces."""
+        try:
+            if method == "dhxml":
+                path = self._dhxml_edit.text().strip()
+                if not path:
+                    return [], "Select a BuildStarted DHXML above to list parts."
+                if not Path(path).is_file():
+                    return [], "BuildStarted DHXML not found."
+                from ampm.parts import BuildStartedDHXML
+
+                pt = BuildStartedDHXML.from_path(path).parts_table()
+            else:
+                path = self._csv_edit.text().strip()
+                if not path:
+                    return [], "Select a Parts CSV above to list parts."
+                if not Path(path).is_file():
+                    return [], "Parts CSV not found."
+                from ampm.parts import QuantAMParts
+
+                pt = QuantAMParts.from_path(path).parent_parts()
+        except Exception as e:  # noqa: BLE001 - surface any parse failure in the UI
+            return [], f"Could not read parts: {e}"
+
+        ids = [str(p) for p in pt["Part ID"].to_list()]
+        has_xy = "X Position" in pt.columns and "Y Position" in pt.columns
+        xs = pt["X Position"].to_list() if has_xy else [None] * len(ids)
+        ys = pt["Y Position"].to_list() if has_xy else [None] * len(ids)
+        return list(zip(ids, xs, ys)), None
+
+    def _repopulate_part_filter(self) -> None:
+        """Rebuild the checklist, keeping prior exclusions for IDs that remain."""
+        if not hasattr(self, "_part_list"):
+            return
+
+        previously_excluded = self._current_excluded_parts()
+        method = self._method_combo.currentText()
+        rows, err = self._read_parts_for_filter(method)
+
+        self._part_list.blockSignals(True)
+        self._part_list.clear()
+        for pid, x, y in rows:
+            if x is not None and y is not None:
+                label = f"{pid}    @ ({x:.1f}, {y:.1f})"
+            else:
+                label = pid
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, pid)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            checked = pid not in previously_excluded
+            item.setCheckState(
+                Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+            )
+            self._part_list.addItem(item)
+        self._part_list.blockSignals(False)
+
+        self._pf_error = err
+        self._update_part_filter_status()
+
+    def _current_excluded_parts(self) -> set[str]:
+        """The set of part IDs currently unticked in the checklist."""
+        out: set[str] = set()
+        if not hasattr(self, "_part_list"):
+            return out
+        for i in range(self._part_list.count()):
+            item = self._part_list.item(i)
+            if item.checkState() != Qt.CheckState.Checked:
+                out.add(str(item.data(Qt.ItemDataRole.UserRole)))
+        return out
+
+    def _set_all_parts_checked(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        self._part_list.blockSignals(True)
+        for i in range(self._part_list.count()):
+            self._part_list.item(i).setCheckState(state)
+        self._part_list.blockSignals(False)
+        self._update_part_filter_status()
+
+    def _apply_part_exclude(self, excluded) -> None:
+        """Tick/untick items to match a saved exclude list."""
+        wanted = {str(p) for p in (excluded or [])}
+        self._part_list.blockSignals(True)
+        for i in range(self._part_list.count()):
+            item = self._part_list.item(i)
+            pid = str(item.data(Qt.ItemDataRole.UserRole))
+            item.setCheckState(
+                Qt.CheckState.Unchecked if pid in wanted else Qt.CheckState.Checked
+            )
+        self._part_list.blockSignals(False)
+        self._update_part_filter_status()
+
+    def _on_part_item_changed(self, _item) -> None:
+        self._update_part_filter_status()
+
+    def _update_part_filter_status(self) -> None:
+        n = self._part_list.count()
+        if n == 0:
+            self._pf_status.setText(
+                getattr(self, "_pf_error", None) or "No parts loaded."
+            )
+            self._part_filter_section.set_title("Part filter")
+            return
+        excluded = len(self._current_excluded_parts())
+        kept = n - excluded
+        if excluded == 0:
+            self._pf_status.setText(f"All {n} parts included.")
+            self._part_filter_section.set_title("Part filter")
+        else:
+            self._pf_status.setText(
+                f"{kept} of {n} parts included \u2014 {excluded} excluded."
+            )
+            self._part_filter_section.set_title(
+                f"Part filter \u2014 {excluded} excluded"
+            )
+
     def _make_float_row(self, parent_layout, label, default):
         row = QHBoxLayout()
         row.addWidget(QLabel(label))
@@ -1043,6 +1294,10 @@ class MainWindow(QMainWindow):
 
     def _on_method_changed(self, method):
         self._cluster_widget.setVisible(method == "dbscan")
+        self._dist_widget.setVisible(method == "direct")
+        self._dhxml_hint.setVisible(method == "dhxml")
+        self._repopulate_part_filter()
+        self._update_load_enabled()
 
     def _on_correction_machine_changed(self, machine):
         current = self._correction_column_combo.currentText()
@@ -1095,13 +1350,18 @@ class MainWindow(QMainWindow):
     def _update_load_enabled(self) -> None:
         """Enable Load only once a config is loaded and required paths are set.
 
-        STL is only required when masking is on; Parts CSV only when assigning.
+        STL is only required when masking is on. When assigning, the 'dhxml'
+        method requires a BuildStarted DHXML; the other methods require a
+        Parts CSV.
         """
         ready = self._config is not None and bool(self._source_edit.text().strip())
         if ready and self._mask_check.isChecked():
             ready = bool(self._stl_edit.text().strip())
         if ready and self._assign_check.isChecked():
-            ready = bool(self._csv_edit.text().strip())
+            if self._method_combo.currentText() == "dhxml":
+                ready = bool(self._dhxml_edit.text().strip())
+            else:
+                ready = bool(self._csv_edit.text().strip())
         self._load_btn.setEnabled(ready)
 
     def _validate_inputs(self) -> list[str]:
@@ -1129,49 +1389,68 @@ class MainWindow(QMainWindow):
                 problems.append(f"STL file does not exist: {stl}")
 
         if self._assign_check.isChecked():
-            csv = self._csv_edit.text().strip()
-            if not csv:
-                problems.append("Assign parts is on but no Parts CSV is set.")
-            elif not Path(csv).is_file():
-                problems.append(f"Parts CSV does not exist: {csv}")
+            method = self._method_combo.currentText()
 
-            md = self._max_dist_edit.text().strip().lower()
-            if md != "none":
-                try:
-                    if float(md) <= 0:
-                        problems.append(
-                            "Max distance must be greater than 0 (or 'none')."
-                        )
-                except ValueError:
+            if method == "dhxml":
+                dhxml = self._dhxml_edit.text().strip()
+                if not dhxml:
                     problems.append(
-                        f"Max distance must be a number or 'none': "
-                        f"{self._max_dist_edit.text()!r}"
+                        "Assign parts is set to 'dhxml' but no BuildStarted "
+                        "DHXML is set."
                     )
+                elif not Path(dhxml).is_file():
+                    problems.append(f"BuildStarted DHXML does not exist: {dhxml}")
+                csv = self._csv_edit.text().strip()
+                if csv and not Path(csv).is_file():
+                    problems.append(f"Parts CSV does not exist: {csv}")
+            else:
+                csv = self._csv_edit.text().strip()
+                if not csv:
+                    problems.append("Assign parts is on but no Parts CSV is set.")
+                elif not Path(csv).is_file():
+                    problems.append(f"Parts CSV does not exist: {csv}")
 
-            if self._method_combo.currentText() == "dbscan":
-                for label, widget in (
-                    ("EPS_XY", self._eps_xy_edit),
-                    ("EPS_Z", self._eps_z_edit),
-                ):
-                    txt = widget.text().strip()
-                    try:
-                        if float(txt) <= 0:
-                            problems.append(f"{label} must be greater than 0.")
-                    except ValueError:
-                        problems.append(f"{label} is not a number: {txt or '(empty)'}")
-
-                ov = self._overlap_edit.text().strip().lower()
-                if ov != "auto":
-                    try:
-                        if int(ov) < 0:
+                if method == "direct":
+                    md = self._max_dist_edit.text().strip().lower()
+                    if md != "none":
+                        try:
+                            if float(md) <= 0:
+                                problems.append(
+                                    "Max distance must be greater than 0 "
+                                    "(or 'none')."
+                                )
+                        except ValueError:
                             problems.append(
-                                "Overlap layers must be 0 or more (or 'auto')."
+                                f"Max distance must be a number or 'none': "
+                                f"{self._max_dist_edit.text()!r}"
                             )
-                    except ValueError:
-                        problems.append(
-                            f"Overlap layers must be an integer or 'auto': "
-                            f"{self._overlap_edit.text()!r}"
-                        )
+
+                if method == "dbscan":
+                    for label, widget in (
+                        ("EPS_XY", self._eps_xy_edit),
+                        ("EPS_Z", self._eps_z_edit),
+                    ):
+                        txt = widget.text().strip()
+                        try:
+                            if float(txt) <= 0:
+                                problems.append(f"{label} must be greater than 0.")
+                        except ValueError:
+                            problems.append(
+                                f"{label} is not a number: {txt or '(empty)'}"
+                            )
+
+                    ov = self._overlap_edit.text().strip().lower()
+                    if ov != "auto":
+                        try:
+                            if int(ov) < 0:
+                                problems.append(
+                                    "Overlap layers must be 0 or more (or 'auto')."
+                                )
+                        except ValueError:
+                            problems.append(
+                                f"Overlap layers must be an integer or 'auto': "
+                                f"{self._overlap_edit.text()!r}"
+                            )
 
         if (
             not self._all_layers_check.isChecked()
@@ -1232,9 +1511,12 @@ class MainWindow(QMainWindow):
         self._source_edit.setText(config["SOURCE"])
         self._stl_edit.setText(config["STL"])
         self._csv_edit.setText(config["PARTS_CSV"])
+        dhxml = config.get("DHXML") or self._find_dhxml(config.get("SOURCE", ""))
+        self._dhxml_edit.setText(dhxml or "")
         self._lt_edit.setText(str(config["LAYER_THICKNESS"]))
 
         self._method_combo.setCurrentText(config["METHOD"])
+        self._on_method_changed(self._method_combo.currentText())
         max_dist = config["MAX_DISTANCE_MM"]
         self._max_dist_edit.setText("none" if max_dist is None else str(max_dist))
 
@@ -1299,6 +1581,10 @@ class MainWindow(QMainWindow):
             self._mask_check.setChecked(bool(override["APPLY_MASK"]))
         if "ASSIGN_PARTS" in override:
             self._assign_check.setChecked(bool(override["ASSIGN_PARTS"]))
+        if "DHXML" in override and override["DHXML"]:
+            self._dhxml_edit.setText(str(override["DHXML"]))
+        if "PART_EXCLUDE" in override:
+            self._apply_part_exclude(override["PART_EXCLUDE"])
         if "CORRECTION_MACHINE" in override:
             machine = override["CORRECTION_MACHINE"]
             if machine in _correction_machines():
@@ -1450,6 +1736,8 @@ class MainWindow(QMainWindow):
         config["SOURCE"] = self._source_edit.text()
         config["STL"] = self._stl_edit.text()
         config["PARTS_CSV"] = self._csv_edit.text()
+        config["DHXML"] = self._dhxml_edit.text()
+        config["PART_EXCLUDE"] = sorted(self._current_excluded_parts()) or None
         config["LAYER_THICKNESS"] = float(self._lt_edit.text())
 
         config["METHOD"] = self._method_combo.currentText()
