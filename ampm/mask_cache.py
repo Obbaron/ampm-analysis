@@ -469,7 +469,7 @@ def _keep_from_cached_keys(df: pl.DataFrame, cache_path: Path) -> np.ndarray:
             return
         keys = pl.concat(pieces) if len(pieces) > 1 else pieces[0]
         for a, b in runs:
-            keep[a:b] = times.slice(a, b - a).is_in(keys).to_numpy()
+            keep[a:b] = times.slice(a, b - a).is_in(keys.implode()).to_numpy()
 
     pf = pq.ParquetFile(cache_path)
     cur_layer: int | None = None
