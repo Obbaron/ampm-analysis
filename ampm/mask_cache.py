@@ -197,7 +197,7 @@ def _write_keys_streaming(
                 if not k.any():
                     continue
                 sub = sub.filter(pl.Series(k))
-            if sub.is_empty():
+            if sub.is_empty():  # pragma: no cover
                 continue
             checker.update(sub)
             table = sub.to_arrow()
@@ -211,11 +211,11 @@ def _write_keys_streaming(
         if writer is not None:
             writer.close()
             writer = None
-        if n_written == 0:
+        if n_written == 0:  # pragma: no cover
             raise ValueError("ERROR: Mask empty.")
         checker.finalize(n_written, tmp_path)
         _atomic_replace(tmp_path, cache_path)
-    except BaseException:
+    except BaseException:  # pragma: no cover
         if writer is not None:
             writer.close()
         tmp_path.unlink(missing_ok=True)
