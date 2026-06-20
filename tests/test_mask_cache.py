@@ -152,7 +152,9 @@ class TestLoad:
     def test_version_mismatch(self, keyed_df, tmp_path, monkeypatch):
         path = tmp_path / "m.pq"
         self._save(keyed_df, path, [(1, 10)])
-        monkeypatch.setattr("ampm.mask_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1)
+        monkeypatch.setattr(
+            "ampm.mask_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
+        )
         full = keyed_df([(1, 10)])
         with pytest.raises(ValueError, match="version"):
             load_mask_keep(full, path, strict=True, verbose=False)
@@ -283,3 +285,198 @@ class TestParamDiff:
 
     def test_no_difference(self):
         assert "no field-level differences" in _format_param_diff({"a": 1}, {"a": 1})
+
+
+class TestVerboseLogging:
+    def _save(self, keyed_df, path, keys, **kw):
+        save_mask_keep(keyed_df(keys), path, verbose=False, **kw)
+
+    def test_save_verbose(self, keyed_df, tmp_path, capsys):
+        save_mask_keep(
+            keyed_df([(1, 10), (1, 11)]), tmp_path / "m.pq", params=PARAMS, verbose=True
+        )
+        assert "mask-keep keys" in capsys.readouterr().out
+
+    def test_load_success_verbose(self, keyed_df, tmp_path, capsys):
+        path = tmp_path / "m.pq"
+        self._save(keyed_df, path, [(1, 10), (2, 10)], params=PARAMS)
+        load_mask_keep(keyed_df([(1, 10), (1, 11), (2, 10)]), path, verbose=True)
+        assert "Loaded mask-keep" in capsys.readouterr().out
+
+    def test_load_missing_file_verbose(self, keyed_df, tmp_path, capsys):
+        with pytest.raises(FileNotFoundError):
+            load_mask_keep(
+                keyed_df([(1, 10)]), tmp_path / "nope.pq", strict=False, verbose=True
+            )
+        assert "[mask_cache]" in capsys.readouterr().out
+
+    def test_load_no_version_verbose(self, keyed_df, tmp_path, capsys):
+        path = tmp_path / "plain.pq"
+        keyed_df([(1, 10)]).write_parquet(path)
+        with pytest.raises(FileNotFoundError):
+            load_mask_keep(keyed_df([(1, 10)]), path, strict=False, verbose=True)
+        assert "no version metadata" in capsys.readouterr().out
+
+    def test_load_version_mismatch_verbose(
+        self, keyed_df, tmp_path, capsys, monkeypatch
+    ):
+        path = tmp_path / "m.pq"
+        self._save(keyed_df, path, [(1, 10)])
+        monkeypatch.setattr(
+            "ampm.mask_cache.CACHE_FORMAT_VERSION", CACHE_FORMAT_VERSION + 1
+        )
+        with pytest.raises(FileNotFoundError):
+            load_mask_keep(keyed_df([(1, 10)]), path, strict=False, verbose=True)
+        assert "version" in capsys.readouterr().out
+
+    def test_load_params_mismatch_verbose(self, keyed_df, tmp_path, capsys):
+        path = tmp_path / "m.pq"
+        self._save(keyed_df, path, [(1, 10)], params=PARAMS)
+        with pytest.raises(FileNotFoundError):
+            load_mask_keep(
+                keyed_df([(1, 10)]),
+                path,
+                expect_params={**PARAMS, "buffer_mm": 9.0},
+                strict=False,
+                verbose=True,
+            )
+        assert "params" in capsys.readouterr().out
+
+    def test_load_zero_keys_verbose(self, tmp_path, capsys):
+        schema = pa.schema(
+            [("layer", pa.int16()), ("Start time", pa.int32())],
+            metadata={_META_VERSION_KEY: str(CACHE_FORMAT_VERSION).encode()},
+        )
+        path = tmp_path / "empty.pq"
+        pq.write_table(schema.empty_table(), path)
+        full = pl.DataFrame(
+            {
+                "layer": pl.Series([1], dtype=pl.Int16),
+                "Start time": pl.Series([10], dtype=pl.Int32),
+            }
+        )
+        with pytest.raises(FileNotFoundError):
+            load_mask_keep(full, path, strict=False, verbose=True)
+        assert "0 keys" in capsys.readouterr().out
+
+    def test_load_no_matching_rows_verbose(self, keyed_df, tmp_path, capsys):
+        path = tmp_path / "m.pq"
+        self._save(keyed_df, path, [(5, 10)])
+        with pytest.raises(FileNotFoundError):
+            load_mask_keep(
+                keyed_df([(1, 10), (2, 10)]), path, strict=False, verbose=True
+            )
+        assert "[mask_cache]" in capsys.readouterr().out
+
+    def test_mask_or_load_miss_verbose(self, keyed_df, tmp_path, capsys):
+        mask_or_load(
+            keyed_df([(1, 10), (1, 11), (2, 10)]),
+            tmp_path / "m.pq",
+            keep_fn=lambda d: np.array([True, False, True]),
+            params=PARAMS,
+            verbose=True,
+        )
+        assert "computing fresh mask" in capsys.readouterr().out
+
+
+class TestStreamingBranches:
+    def test_all_false_chunk_is_skipped(self, keyed_df, tmp_path):
+        # Overall keep is non-empty (passes the early guard) but the first
+        # 2-row chunk is all-False -> that chunk is skipped mid-stream.
+        full = keyed_df([(1, 10), (1, 11), (2, 10), (2, 11)])
+        keep = np.array([False, False, True, True])
+        save_mask_keep_from_keep(
+            full, keep, tmp_path / "m.pq", chunk_rows=2, verbose=False
+        )
+        stored = pl.read_parquet(tmp_path / "m.pq").sort(["layer", "Start time"])
+        assert stored.height == 2
+        assert stored["layer"].to_list() == [2, 2]
+
+    def test_layer_spans_chunk_boundary(self, keyed_df, tmp_path):
+        # One layer split across chunks -> "same layer continued" path in the
+        # uniqueness checker.
+        full = keyed_df([(1, 10), (1, 11), (1, 12), (1, 13)])
+        save_mask_keep(full, tmp_path / "m.pq", chunk_rows=2, verbose=False)
+        assert pl.read_parquet(tmp_path / "m.pq").height == 4
+
+    def test_noncontiguous_layers_global_fallback_multichunk(self, keyed_df, tmp_path):
+        # Layers interleave across 3 chunks -> global-uniqueness mode engages and
+        # a later chunk hits the early-return; keys stay globally unique.
+        full = keyed_df([(1, 10), (2, 10), (1, 11), (2, 11), (1, 12), (2, 12)])
+        save_mask_keep(full, tmp_path / "m.pq", chunk_rows=2, verbose=False)
+        assert pl.read_parquet(tmp_path / "m.pq").height == 6
+
+    def test_load_empty_input_dataframe(self, keyed_df, tmp_path):
+        # 0-row input exercises the n == 0 short-circuit in the keep computation.
+        path = tmp_path / "m.pq"
+        save_mask_keep(keyed_df([(1, 10)]), path, verbose=False)
+        empty = pl.DataFrame(
+            {
+                "layer": pl.Series([], dtype=pl.Int16),
+                "Start time": pl.Series([], dtype=pl.Int32),
+            }
+        )
+        out = load_mask_keep(empty, path, strict=True, verbose=False)
+        assert out.height == 0
+
+
+class TestAtomicReplace:
+    def _flaky(self, real, fail_until, state):
+        def repl(a, b):
+            state["n"] += 1
+            if state["n"] <= fail_until:
+                raise PermissionError("WinError 32 (simulated lock)")
+            return real(a, b)
+
+        return repl
+
+    def test_retries_then_succeeds(self, tmp_path, monkeypatch):
+        import os
+        import time
+
+        from ampm.mask_cache import _atomic_replace
+
+        src = tmp_path / "src.tmp"
+        src.write_text("payload")
+        dest = tmp_path / "dest.pq"
+        state = {"n": 0}
+        monkeypatch.setattr(os, "replace", self._flaky(os.replace, 1, state))
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+        _atomic_replace(src, dest)
+        assert dest.read_text() == "payload"
+        assert state["n"] == 2  # failed once, succeeded on retry
+
+    def test_fallback_after_exhausting_retries(self, tmp_path, monkeypatch):
+        import os
+        import time
+
+        from ampm.mask_cache import _atomic_replace
+
+        src = tmp_path / "src.tmp"
+        src.write_text("payload")
+        dest = tmp_path / "dest.pq"
+        dest.write_text("old")
+        state = {"n": 0}
+        # all 10 loop attempts fail; the post-loop unlink+replace succeeds.
+        monkeypatch.setattr(os, "replace", self._flaky(os.replace, 10, state))
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+        _atomic_replace(src, dest, attempts=10)
+        assert dest.read_text() == "payload"
+
+    def test_gives_up_and_raises(self, tmp_path, monkeypatch):
+        import os
+        import time
+
+        from ampm.mask_cache import _atomic_replace
+
+        src = tmp_path / "src.tmp"
+        src.write_text("payload")
+        dest = tmp_path / "dest.pq"
+
+        def always_fail(a, b):
+            raise PermissionError("always locked")
+
+        monkeypatch.setattr(os, "replace", always_fail)
+        monkeypatch.setattr(time, "sleep", lambda *_: None)
+        with pytest.raises(PermissionError, match="Could not replace"):
+            _atomic_replace(src, dest, attempts=3)
