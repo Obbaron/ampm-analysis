@@ -315,6 +315,20 @@ class TestResolveLayers:
         with pytest.raises(ValueError, match="None of the requested layers exist"):
             store._resolve_layers([100, 200])
 
+    def test_inverted_tuple_resolves_empty(self, store):
+        # (start, end) with start > end is an empty inclusive range.
+        assert store._resolve_layers((5, 1)) == set()
+
+    def test_float_tuple_is_rejected(self, store):
+        # Layer numbers are whole numbers; a float tuple is a mistake, not a
+        # range, and must not silently become the explicit set {1, 5}.
+        with pytest.raises(TypeError, match="whole numbers"):
+            store._resolve_layers((1.0, 5.0))
+
+    def test_partial_float_tuple_is_rejected(self, store):
+        with pytest.raises(TypeError, match="whole numbers"):
+            store._resolve_layers((1, 5.0))
+
 
 class TestQuery:
     def test_returns_all_layers_by_default(self, store):
@@ -381,6 +395,11 @@ class TestQuery:
     def test_empty_layer_selection_raises(self, store):
         with pytest.raises(ValueError, match="No layers selected"):
             store.query(layers=[])
+
+    def test_inverted_tuple_query_raises(self, store):
+        # (5, 1) is an empty inclusive range -> no layers -> rejected by query.
+        with pytest.raises(ValueError, match="No layers selected"):
+            store.query(layers=(5, 1))
 
     def test_query_triggers_cache_build(self, store):
         assert not store._cache_path(1).exists()

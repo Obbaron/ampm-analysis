@@ -79,7 +79,7 @@ def downsample_grid(
         Column names for the three spatial axes. When ``group_by`` is set
         and equals ``z_col`` (or you don't have a third spatial axis), pass
         the same column for ``z_col`` and the binning still works — ``z_col``
-        contributes one bin per group, which is the desired behaviour.
+        contributes one bin per group.
     agg_columns
         Columns to aggregate per voxel. If None, all numeric columns other
         than the spatial axes are aggregated. Non-numeric columns are dropped.
@@ -115,7 +115,11 @@ def downsample_grid(
                 out_frames.append(sub)
                 continue
             downsampled = downsample_grid(
-                sub.drop(group_by) if group_by in sub.columns else sub,
+                (
+                    sub.drop(group_by)
+                    if group_by in sub.columns and group_by not in (x_col, y_col, z_col)
+                    else sub
+                ),
                 n,
                 x_col=x_col,
                 y_col=y_col,

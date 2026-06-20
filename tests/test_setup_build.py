@@ -202,3 +202,48 @@ class TestCreateConfig:
         text = toml_path.read_text()
         assert "explicit.stl" in text
         assert "layer_thickness = 0.05" in text
+
+
+class TestFindPartsCsvMulti:
+    def test_no_quantam_among_many_raises(self, tmp_path):
+        (tmp_path / "a.csv").write_text("x,y\n1,2\n")
+        (tmp_path / "b.csv").write_text("p,q\n3,4\n")
+        with pytest.raises(FileNotFoundError, match="none"):
+            _find_parts_csv(tmp_path)
+
+    def test_multiple_quantam_raises(self, tmp_path):
+        (tmp_path / "a.csv").write_text(quantam_csv_text())
+        (tmp_path / "b.csv").write_text(quantam_csv_text())
+        with pytest.raises(ValueError, match="Cannot determine"):
+            _find_parts_csv(tmp_path)
+
+
+class TestFindSourceDirIgnoresNonPacket:
+    def test_non_packet_txt_ignored(self, tmp_path):
+        data = tmp_path / "data"
+        data.mkdir()
+        make_packet(data)
+        (tmp_path / "notes.txt").write_text("not a packet file")
+        assert _find_source_dir(tmp_path) == data
+
+
+class TestCreateConfigAbsolutePaths:
+    def test_paths_outside_build_dir_stay_absolute(self, tmp_path):
+        # source / stl / csv all outside build_dir -> relative_to fails ->
+        # absolute paths written into the toml.
+        build = tmp_path / "proj"
+        build.mkdir()
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        src = outside / "data"
+        src.mkdir()
+        make_packet(src)
+        stl = outside / "plate.stl"
+        stl.write_bytes(b"x")
+        csv = outside / "parts.csv"
+        csv.write_text(quantam_csv_text("0.03"))
+        toml_path = create_config(build, source=src, stl=stl, parts_csv=csv)
+        text = toml_path.read_text()
+        assert str(src.resolve()) in text
+        assert str(stl.resolve()) in text
+        assert str(csv.resolve()) in text

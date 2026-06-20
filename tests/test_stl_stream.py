@@ -240,3 +240,43 @@ class TestMultiBody:
         assert isinstance(geom, MultiPolygon)
         assert len(geom.geoms) == 2
         assert geom.area == pytest.approx(200.0, abs=1.0)
+
+
+class TestPolygonizeCoverage:
+    def test_clockwise_only_ring_returns_none(self):
+        # A single clockwise (negative-area) ring has no outer loop -> None.
+        cw = np.array(
+            [
+                [0.0, 0.0, 0.0, 10.0],
+                [0.0, 10.0, 10.0, 10.0],
+                [10.0, 10.0, 10.0, 0.0],
+                [10.0, 0.0, 0.0, 0.0],
+            ]
+        )
+        assert _polygonize_layer(cw) is None
+
+    def test_degenerate_ring_is_skipped(self):
+        # A zero-area (collinear) ring is skipped; a real square still wins.
+        collinear = np.array(
+            [
+                [0.0, -5.0, 1.0, -5.0],
+                [1.0, -5.0, 2.0, -5.0],
+                [2.0, -5.0, 0.0, -5.0],
+            ]
+        )
+        geom = _polygonize_layer(np.vstack([square_segments(), collinear]))
+        assert isinstance(geom, MultiPolygon)
+        assert geom.area == pytest.approx(100.0)
+
+    def test_intersect_chunk_no_intersections_returns_empty(self):
+        from ampm.stl_stream import _intersect_chunk
+
+        verts = np.zeros((2, 3, 3), dtype=np.float32)
+        verts[:, :, 2] = -100.0  # all triangles well below every plane
+        planes = np.array([0.0, 1.0, 2.0], dtype=np.float32)
+        segs, idx = _intersect_chunk(verts, planes)
+        assert segs.shape[0] == 0 and idx.shape[0] == 0
+
+    def test_streaming_verbose_prints(self, box_stl, capsys):
+        slice_stl_streaming(box_stl, [50], layer_thickness=THICKNESS, verbose=True)
+        assert "[stl_stream]" in capsys.readouterr().out

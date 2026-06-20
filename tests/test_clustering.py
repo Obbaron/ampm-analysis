@@ -370,3 +370,106 @@ class TestClusterRegimes:
             verbose=False,
         )
         assert set(out["cluster"].to_list()) == {0, 1}
+
+
+class TestCoverageGaps:
+    def test_validate_2d_too_few_columns(self):
+        df = pl.DataFrame({"Demand X": [0.0]})
+        with pytest.raises(ValueError, match="needs 2 columns"):
+            _validate(df, "2d", ("Demand X",), 1.0, None)
+
+    def test_cluster_summary_missing_spatial_column(self):
+        # cluster present but a spatial column absent -> KeyError on that column.
+        df = pl.DataFrame({"Demand Y": [0.0], "cluster": [0]})
+        with pytest.raises(KeyError, match="Demand X"):
+            cluster_summary(df, columns=("Demand X", "Demand Y"))
+
+    def test_unionfind_union_same_root_noops(self):
+        uf = _UnionFind()
+        uf.add("a")
+        uf.add("b")
+        uf.union("a", "b")
+        uf.union("a", "b")  # already same root -> early return
+        assert uf.find("a") == uf.find("b")
+
+    def test_unionfind_rank_swap_and_path_compression(self):
+        uf = _UnionFind()
+        for k in (0, 1, 2, 3):
+            uf.add(k)
+        uf.union(1, 2)  # rank(root) becomes 1
+        uf.union(0, 1)  # rank(find 0)=0 < rank(find 1)=1 -> rank-swap branch
+        uf.union(2, 3)
+        root = uf.find(3)  # deep find -> path compression on an indirect child
+        assert uf.find(0) == root and uf.find(1) == root and uf.find(2) == root
+
+    def test_unionfind_path_compression_depth2(self):
+        # Merge two rank-1 trees so a node sits at depth 2; find() then walks
+        # and compresses that two-hop path (inner while-loop body).
+        uf = _UnionFind()
+        for k in (0, 1, 2, 3):
+            uf.add(k)
+        uf.union(0, 1)  # rank-1 tree {0,1}
+        uf.union(2, 3)  # rank-1 tree {2,3}
+        uf.union(0, 2)  # equal ranks -> 2 reparented under 0; node 3 now depth 2
+        assert uf.find(3) == uf.find(0)
+
+    def test_chunked_2d_mode_runs(self):
+        # mode='2d' takes the min_overlap=1 branch (no eps_z).
+        rows = []
+        for L in range(1, 11):
+            for _ in range(6):
+                rows.append((0.0, 0.0, L))
+        df = pl.DataFrame(
+            {
+                "Demand X": pl.Series([r[0] for r in rows], dtype=pl.Float64),
+                "Demand Y": pl.Series([r[1] for r in rows], dtype=pl.Float64),
+                "layer": pl.Series([r[2] for r in rows], dtype=pl.Int16),
+            }
+        )
+        out = cluster_dbscan_chunked(
+            df,
+            eps_xy=1.0,
+            mode="2d",
+            min_samples=5,
+            layers_per_chunk=5,
+            layer_col="layer",
+            verbose=False,
+        )
+        assert out.height == df.height
+        assert out.schema["cluster"] == pl.Int32
+
+    def test_chunked_verbose_clamp_prints(self, capsys):
+        df = vertical_line_3d(range(1, 21), per_layer=6)
+        cluster_dbscan_chunked(
+            df,
+            eps_xy=1.0,
+            eps_z=0.06,
+            min_samples=5,
+            layers_per_chunk=8,
+            overlap_layers=1,  # below the minimum -> clamp warning
+            layer_thickness=THICKNESS,
+            verbose=True,
+        )
+        out = capsys.readouterr().out
+        assert "Chunked DBSCAN" in out and "Clamping" in out
+
+    def test_chunked_skips_empty_gap_chunks(self):
+        # Layers 1-3 then 50-52: chunk windows over the gap catch no rows.
+        df = pl.concat(
+            [
+                vertical_line_3d([1, 2, 3], per_layer=6),
+                vertical_line_3d([50, 51, 52], per_layer=6),
+            ]
+        )
+        out = cluster_dbscan_chunked(
+            df,
+            eps_xy=1.0,
+            eps_z=0.06,
+            min_samples=5,
+            layers_per_chunk=8,
+            overlap_layers=4,
+            layer_thickness=THICKNESS,
+            verbose=False,
+        )
+        assert out.height == df.height
+        assert len(set(out["cluster"].to_list()) - {-1}) == 2

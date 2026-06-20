@@ -8,7 +8,7 @@ rendering anything. No HTML or display is produced.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -30,6 +30,10 @@ from ampm.plotting import (
     scatter2d_layered,
     scatter3d,
 )
+
+
+def traces(fig: Figure) -> tuple[Any, ...]:
+    return tuple(fig.data)
 
 
 def xyz_df(n=5, color=None):
@@ -97,8 +101,8 @@ class TestHelpers:
 class TestScatter3d:
     def test_basic_trace_and_data(self):
         fig = scatter3d(xyz_df(4), "X", "Y", "Z")
-        assert len(fig.data) == 1
-        t = fig.data[0]
+        assert len(traces(fig)) == 1
+        t = traces(fig)[0]
         assert t.type == "scatter3d"
         assert list(t.x) == [0.0, 1.0, 2.0, 3.0]
         assert t.marker.color is None  # no color column
@@ -109,18 +113,18 @@ class TestScatter3d:
 
     def test_numeric_color_sets_colorbar(self):
         fig = scatter3d(xyz_df(3, color=[1.0, 2.0, 3.0]), "X", "Y", "Z", color="c")
-        m = fig.data[0].marker
+        m = traces(fig)[0].marker
         assert m.showscale is True
         assert m.colorbar.title.text == "c"
 
     def test_categorical_color_uses_labels(self):
         fig = scatter3d(xyz_df(3, color=["x", "y", "x"]), "X", "Y", "Z", color="c")
-        assert list(fig.data[0].marker.colorbar.ticktext) == ["x", "y"]
+        assert list(traces(fig)[0].marker.colorbar.ticktext) == ["x", "y"]
 
     def test_null_color_rows_filtered(self, capsys):
         df = xyz_df(3, color=[1.0, None, 3.0])
         fig = scatter3d(df, "X", "Y", "Z", color="c")
-        assert len(fig.data[0].x) == 2
+        assert len(traces(fig)[0].x) == 2
         assert "null" in capsys.readouterr().out
 
     def test_all_null_color_raises(self):
@@ -143,14 +147,14 @@ class TestScatter3d:
             color="c",
             color_range=(0.0, 5.0),
         )
-        assert fig.data[0].marker.cmin == 0.0
-        assert fig.data[0].marker.cmax == 5.0
+        assert traces(fig)[0].marker.cmin == 0.0
+        assert traces(fig)[0].marker.cmax == 5.0
 
 
 class TestScatter2d:
     def test_uses_scattergl(self):
         fig = scatter2d(xyz_df(3), "X", "Y")
-        assert fig.data[0].type == "scattergl"
+        assert traces(fig)[0].type == "scattergl"
 
     def test_equal_aspect_sets_scaleanchor(self):
         fig = scatter2d(xyz_df(3), "X", "Y", equal_aspect=True)
@@ -167,30 +171,30 @@ class TestBar:
 
     def test_basic_bar(self):
         fig = bar(self._df(), "k", "v")
-        assert fig.data[0].type == "bar"
-        assert list(fig.data[0].x) == ["a", "b", "c"]
+        assert traces(fig)[0].type == "bar"
+        assert list(traces(fig)[0].x) == ["a", "b", "c"]
 
     def test_sort_by_y(self):
         fig = bar(self._df(), "k", "v", sort_by="y")
-        assert list(fig.data[0].x) == ["b", "c", "a"]  # ascending by value
+        assert list(traces(fig)[0].x) == ["b", "c", "a"]  # ascending by value
 
     def test_sort_by_y_descending(self):
         fig = bar(self._df(), "k", "v", sort_by="y", sort_descending=True)
-        assert list(fig.data[0].x) == ["a", "c", "b"]
+        assert list(traces(fig)[0].x) == ["a", "c", "b"]
 
     def test_invalid_sort_by_raises(self):
         with pytest.raises(ValueError, match="sort_by"):
-            bar(self._df(), "k", "v", sort_by="z")
+            bar(self._df(), "k", "v", sort_by="z")  # type: ignore[arg-type]
 
     def test_horizontal_swaps_axes(self):
         fig = bar(self._df(), "k", "v", orientation="h")
         # For horizontal, category goes on the y axis.
-        assert list(fig.data[0].y) == ["a", "b", "c"]
-        assert list(fig.data[0].x) == [3.0, 1.0, 2.0]
+        assert list(traces(fig)[0].y) == ["a", "b", "c"]
+        assert list(traces(fig)[0].x) == [3.0, 1.0, 2.0]
 
     def test_invalid_orientation_raises(self):
         with pytest.raises(ValueError, match="orientation"):
-            bar(self._df(), "k", "v", orientation="diagonal")
+            bar(self._df(), "k", "v", orientation="diagonal")  # type: ignore[arg-type]
 
 
 class TestContour:
@@ -206,15 +210,15 @@ class TestContour:
 
     def test_contour_with_points(self):
         fig = contour(self._grid_df(), "x", "y", "z", show_points=True)
-        types = [t.type for t in fig.data]
+        types = [t.type for t in traces(fig)]
         assert "contour" in types
         assert "scatter" in types  # overlay points
-        assert len(fig.data) == 2
+        assert len(traces(fig)) == 2
 
     def test_contour_without_points(self):
         fig = contour(self._grid_df(), "x", "y", "z", show_points=False)
-        assert len(fig.data) == 1
-        assert fig.data[0].type == "contour"
+        assert len(traces(fig)) == 1
+        assert traces(fig)[0].type == "contour"
 
     def test_missing_column_raises(self):
         with pytest.raises(KeyError):
@@ -243,9 +247,9 @@ class TestScatter2dLayered:
 
     def test_one_trace_per_layer_first_visible(self):
         fig = scatter2d_layered(self._df(), "X", "Y", "s1")
-        assert len(fig.data) == 2  # two layers
-        assert fig.data[0].visible is True
-        assert fig.data[1].visible is False
+        assert len(traces(fig)) == 2  # two layers
+        assert traces(fig)[0].visible is True
+        assert traces(fig)[1].visible is False
         assert len(fig.layout.sliders[0].steps) == 2
 
     def test_single_signal_has_no_dropdown(self):
@@ -263,7 +267,7 @@ class TestScatter2dLayered:
         fig = scatter2d_layered(
             self._df(n_per_layer=50), "X", "Y", "s1", points_per_layer=10
         )
-        assert all(len(t.x) == 10 for t in fig.data)
+        assert all(len(t.x) == 10 for t in traces(fig))
 
     def test_no_data_raises(self):
         empty = pl.DataFrame(
@@ -287,13 +291,13 @@ class TestKde:
 
     def test_one_trace_per_group(self):
         fig = kde(self._df(), "value", verbose=False)
-        assert len(fig.data) == 2
-        assert sorted(t.name for t in fig.data) == ["A", "B"]
+        assert len(traces(fig)) == 2
+        assert sorted(t.name for t in traces(fig)) == ["A", "B"]
 
     def test_group_filter(self):
         fig = kde(self._df(), "value", groups=["A"], verbose=False)
-        assert len(fig.data) == 1
-        assert fig.data[0].name == "A"
+        assert len(traces(fig)) == 1
+        assert traces(fig)[0].name == "A"
 
     def test_missing_column_raises(self):
         with pytest.raises(KeyError):
@@ -305,14 +309,14 @@ class TestKde:
 
     def test_fill_sets_fillcolor(self):
         fig = kde(self._df(), "value", groups=["A"], fill=True, verbose=False)
-        assert fig.data[0].fill == "tozeroy"
+        assert traces(fig)[0].fill == "tozeroy"
 
     def test_drops_noise_group(self):
         df = pl.DataFrame(
             {"part_id": ["A"] * 50 + ["noise"] * 50, "value": list(range(100))}
         )
         fig = kde(df, "value", noise_label="noise", verbose=False)
-        names = [t.name for t in fig.data]
+        names = [t.name for t in traces(fig)]
         assert "noise" not in names
 
 

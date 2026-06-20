@@ -8,6 +8,7 @@ Queries use Polars' lazy API so only the requested slice is materialized in memo
 
 from __future__ import annotations
 
+import numbers
 import re
 from pathlib import Path
 from typing import Iterable
@@ -309,12 +310,13 @@ class DataStore:
             return all_layers
         if isinstance(layers, range):
             requested = set(layers)
-        elif (
-            isinstance(layers, tuple)
-            and len(layers) == 2
-            and all(isinstance(x, int) for x in layers)
-        ):
-            lo, hi = layers
+        elif isinstance(layers, tuple) and len(layers) == 2:
+            if not all(isinstance(x, numbers.Integral) for x in layers):
+                raise TypeError(
+                    f"Layer range tuple must be (int, int); layer numbers are "
+                    f"whole numbers, got {layers!r}"
+                )
+            lo, hi = int(layers[0]), int(layers[1])
             requested = set(range(lo, hi + 1))
         else:
             requested = set(int(x) for x in layers)
