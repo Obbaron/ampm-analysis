@@ -6,6 +6,7 @@ pick a view (plot type), configure axes and settings, and plot.
 """
 
 import builtins
+import csv
 import json
 import re
 import sys
@@ -13,7 +14,7 @@ import traceback
 from pathlib import Path
 from typing import cast
 
-from PyQt6.QtCore import QSettings, Qt, QThread, pyqtSignal
+from PyQt6.QtCore import QByteArray, QSettings, Qt, QThread, pyqtSignal
 from PyQt6.QtGui import QDoubleValidator
 from PyQt6.QtWidgets import (
     QApplication,
@@ -73,6 +74,39 @@ _OVERLAY_KEYS = (
     "CORRECTION_MACHINE",
     "CORRECTION_COLUMN",
 )
+
+# Always loaded by the pipeline regardless of selection (the worker prepends
+# Demand X/Y + Start time, and DataStore.query always re-adds layer + Z), so
+# these are excluded from the user-selectable signal-column list.
+ALWAYS_LOADED_COLUMNS = ("Demand X", "Demand Y", "Start time", "layer", "Z")
+
+_PACKET_RE = re.compile(r"^Packet data for layer \d+, laser \d+\.txt$", re.IGNORECASE)
+
+
+def _first_packet_file(src: str) -> Path | None:
+    """First 'Packet data for layer N, laser M.txt' under the source dir."""
+    base = Path(src)
+    if not base.is_dir():
+        return None
+    matches = [p for p in base.iterdir() if p.is_file() and _PACKET_RE.match(p.name)]
+    if not matches:
+        matches = [p for p in base.rglob("*.txt") if _PACKET_RE.match(p.name)]
+    return sorted(matches)[0] if matches else None
+
+
+def _read_header_columns(path: Path) -> list[str]:
+    """Column names from a packet file's header row (delimiter auto-detected)."""
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        line = f.readline().rstrip("\r\n")
+    try:
+        delim = csv.Sniffer().sniff(line, delimiters="\t,;").delimiter
+    except csv.Error:
+        delim = "\t"
+    return [
+        c.strip().strip('"')
+        for c in next(csv.reader([line], delimiter=delim))
+        if c.strip()
+    ]
 
 
 class NoScrollComboBox(QComboBox):
@@ -733,6 +767,7 @@ class MainWindow(QMainWindow):
         main_layout = QHBoxLayout(central)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter = splitter
         main_layout.addWidget(splitter)  # left, config/analysis, right, log
 
         self._tabs = QTabWidget()
@@ -781,6 +816,7 @@ class MainWindow(QMainWindow):
         )
 
         self._source_edit.textChanged.connect(self._probe_layers)
+        self._source_edit.textChanged.connect(self._probe_columns)
 
         config_layout.addWidget(sources_group)
 
@@ -935,23 +971,41 @@ class MainWindow(QMainWindow):
         self._layer_range_widget.setEnabled(False)  # follows "All layers" checkbox
         settings_layout.addWidget(self._layer_range_widget)
 
-        # Columns to load
-        cols_row = QHBoxLayout()
-        cols_row.addWidget(QLabel("Columns:"))
-        self._columns_edit = QLineEdit()
-        self._columns_edit.setText("all")
-        self._columns_edit.setPlaceholderText(
-            "all  — or comma-separated signal columns"
+        # Columns to load (populated by probing the source's first packet file)
+        self._columns_section = CollapsibleSection("Columns", expanded=False)
+        col_layout = self._columns_section.content_layout()
+
+        col_hint = QLabel(
+            "Untick signal columns to skip loading them. Demand X/Y, Start "
+            "time, layer, and Z are always loaded. Loading fewer columns cuts "
+            "memory roughly in proportion on dense builds."
         )
-        self._columns_edit.setToolTip(
-            "Signal columns to load, comma-separated (e.g. 'MeltVIEW melt pool "
-            "(mean), Laser output power (mean)'). 'all' loads every column. "
-            "Demand X/Y, Start time, layer, and Z are always included. For "
-            "dense builds, loading only the columns you analyze cuts memory "
-            "roughly in proportion."
+        col_hint.setWordWrap(True)
+        col_layout.addWidget(col_hint)
+
+        col_btn_row = QHBoxLayout()
+        self._cols_all_btn = QPushButton("Select all")
+        self._cols_none_btn = QPushButton("Select none")
+        self._cols_all_btn.clicked.connect(lambda: self._set_all_columns_checked(True))
+        self._cols_none_btn.clicked.connect(
+            lambda: self._set_all_columns_checked(False)
         )
-        cols_row.addWidget(self._columns_edit, stretch=1)
-        settings_layout.addLayout(cols_row)
+        col_btn_row.addWidget(self._cols_all_btn)
+        col_btn_row.addWidget(self._cols_none_btn)
+        col_btn_row.addStretch()
+        col_layout.addLayout(col_btn_row)
+
+        self._columns_list = QListWidget()
+        self._columns_list.setMaximumHeight(180)
+        self._columns_list.itemChanged.connect(self._on_column_item_changed)
+        col_layout.addWidget(self._columns_list)
+
+        self._cols_status = QLabel("Set a source directory to list columns.")
+        self._cols_status.setWordWrap(True)
+        self._cols_status.setStyleSheet("color: gray;")
+        col_layout.addWidget(self._cols_status)
+
+        settings_layout.addWidget(self._columns_section)
 
         # X / Y spatial range (optional). Blank = no bound on that side.
         xr_row = QHBoxLayout()
@@ -1144,15 +1198,35 @@ class MainWindow(QMainWindow):
         if self._views:
             self._on_view_changed(self._view_combo.currentText())
 
+        self._restore_window_state()
+
+    def _restore_window_state(self) -> None:
+        """Restore window size/position, maximized/fullscreen, and the splitter
+        divider from the previous session (QSettings). No-op on first launch."""
+        geo = self._settings.value("window/geometry")
+        if geo is not None:
+            self.restoreGeometry(
+                geo if isinstance(geo, QByteArray) else QByteArray(geo)
+            )
+        split = self._settings.value("window/splitter")
+        if split is not None:
+            self._splitter.restoreState(
+                split if isinstance(split, QByteArray) else QByteArray(split)
+            )
+
+    def _save_window_state(self) -> None:
+        """Persist window geometry (incl. maximized/fullscreen) and splitter."""
+        self._settings.setValue("window/geometry", self.saveGeometry())
+        self._settings.setValue("window/splitter", self._splitter.saveState())
+
     def closeEvent(self, a0):
         """Save UI state and wait for any running threads before closing."""
+        self._save_window_state()
         self._save_ui_state()
-
         for worker in (self._load_worker, self._plot_worker):
             if worker is not None and worker.isRunning():
                 worker.quit()
                 worker.wait()
-
         if a0 is not None:
             a0.accept()
 
@@ -1307,6 +1381,143 @@ class MainWindow(QMainWindow):
                 f"Part filter \u2014 {excluded} excluded"
             )
 
+    def _read_columns_from_source(self, src: str):
+        """``(columns, error)`` for the packet data at ``src``.
+
+        Prefers ``DataStore.columns`` (which parses these files correctly);
+        falls back to reading the first packet file's header directly.
+        """
+        try:
+            from ampm import DataStore
+
+            return list(DataStore(src).columns), None
+        except Exception:
+            pass
+        try:
+            path = _first_packet_file(src)
+            if path is None:
+                return [], "No packet data files found in the source directory."
+            return _read_header_columns(path), None
+        except Exception as e:  # noqa: BLE001 - surface any read failure in the UI
+            return [], f"Could not read columns: {e}"
+
+    def _probe_columns(self) -> None:
+        """List selectable signal columns from the source's first packet file.
+
+        Cheap (header only). Preserves prior unticks where the column remains.
+        """
+        if not hasattr(self, "_columns_list"):
+            return
+
+        previously_unchecked = self._current_unchecked_columns()
+        src = self._source_edit.text().strip()
+        if not src:
+            cols, err = [], "Set a source directory to list columns."
+        else:
+            cols, err = self._read_columns_from_source(src)
+        signal_cols = [c for c in cols if c not in ALWAYS_LOADED_COLUMNS]
+
+        self._columns_list.blockSignals(True)
+        self._columns_list.clear()
+        for col in signal_cols:
+            item = QListWidgetItem(col)
+            item.setData(Qt.ItemDataRole.UserRole, col)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            checked = col not in previously_unchecked
+            item.setCheckState(
+                Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+            )
+            self._columns_list.addItem(item)
+        self._columns_list.blockSignals(False)
+
+        self._cols_error = err
+        self._update_columns_status()
+
+    def _all_signal_columns(self) -> list[str]:
+        return [
+            str(
+                cast(QListWidgetItem, self._columns_list.item(i)).data(
+                    Qt.ItemDataRole.UserRole
+                )
+            )
+            for i in range(self._columns_list.count())
+        ]
+
+    def _current_unchecked_columns(self) -> set[str]:
+        out: set[str] = set()
+        if not hasattr(self, "_columns_list"):
+            return out
+        for i in range(self._columns_list.count()):
+            item = cast(QListWidgetItem, self._columns_list.item(i))
+            if item.checkState() != Qt.CheckState.Checked:
+                out.add(str(item.data(Qt.ItemDataRole.UserRole)))
+        return out
+
+    def _set_all_columns_checked(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        self._columns_list.blockSignals(True)
+        for i in range(self._columns_list.count()):
+            cast(QListWidgetItem, self._columns_list.item(i)).setCheckState(state)
+        self._columns_list.blockSignals(False)
+        self._update_columns_status()
+
+    def _selected_load_columns(self):
+        """LOAD_COLUMNS value: None when all are ticked (or none are listed),
+        else the list of ticked signal columns."""
+        if not hasattr(self, "_columns_list") or self._columns_list.count() == 0:
+            return None
+        unchecked = self._current_unchecked_columns()
+        if not unchecked:
+            return None
+        return [c for c in self._all_signal_columns() if c not in unchecked]
+
+    def _apply_load_columns(self, load_columns) -> None:
+        """Tick to match a saved LOAD_COLUMNS (None -> all; [] -> none)."""
+        if not hasattr(self, "_columns_list"):
+            return
+
+        self._columns_list.blockSignals(True)
+
+        if load_columns is None:
+            for i in range(self._columns_list.count()):
+                cast(QListWidgetItem, self._columns_list.item(i)).setCheckState(
+                    Qt.CheckState.Checked
+                )
+
+        else:
+            wanted = {str(c) for c in load_columns}
+            for i in range(self._columns_list.count()):
+                item = cast(QListWidgetItem, self._columns_list.item(i))
+                col = str(item.data(Qt.ItemDataRole.UserRole))
+                item.setCheckState(
+                    Qt.CheckState.Checked if col in wanted else Qt.CheckState.Unchecked
+                )
+
+        self._columns_list.blockSignals(False)
+        self._update_columns_status()
+
+    def _on_column_item_changed(self, _item) -> None:
+        self._update_columns_status()
+
+    def _update_columns_status(self) -> None:
+        n = self._columns_list.count()
+
+        if n == 0:
+            self._cols_status.setText(
+                getattr(self, "_cols_error", None) or "No columns to list."
+            )
+            self._columns_section.set_title("Columns")
+            return
+        checked = n - len(self._current_unchecked_columns())
+
+        if checked == n:
+            self._cols_status.setText(f"All {n} signal columns loaded.")
+            self._columns_section.set_title("Columns \u2014 all")
+
+        else:
+            self._cols_status.setText(f"{checked} of {n} signal columns loaded.")
+            self._columns_section.set_title(f"Columns \u2014 {checked}/{n}")
+
     def _make_float_row(self, parent_layout, label, default):
         row = QHBoxLayout()
         row.addWidget(QLabel(label))
@@ -1406,11 +1617,11 @@ class MainWindow(QMainWindow):
                 self._mask_check.setChecked(has_stl)
 
             self._prev_has_stl = has_stl
-
             self._mask_check.setToolTip(
                 "Filter rows to the part region using the STL geometry"
                 if has_stl
-                else "No STL set"
+                else "No STL set \u2014 Browse an STL in 'Data source paths' "
+                "to enable masking"
             )
 
             avail = {"direct": has_csv, "dbscan": has_csv, "dhxml": has_dhxml}
@@ -1439,6 +1650,7 @@ class MainWindow(QMainWindow):
                         self._method_combo.setCurrentIndex(i)
                         self._method_combo.blockSignals(False)
                         self._sync_method_widgets(self._method_combo.currentText())
+
                         break
 
             self._assign_check.setEnabled(any_method)
@@ -1451,8 +1663,10 @@ class MainWindow(QMainWindow):
             self._assign_check.setToolTip(
                 "Assign each row to its nearest part ID"
                 if any_method
-                else "No Parts CSV or BuildStarted DHXML set"
+                else "No Parts CSV or BuildStarted DHXML set \u2014 nothing "
+                "to assign from"
             )
+
         finally:
             self._in_refresh_options = False
 
@@ -1468,22 +1682,28 @@ class MainWindow(QMainWindow):
             return problems
 
         source = self._source_edit.text().strip()
+
         if not source:
             problems.append("Source directory is not set.")
+
         elif not Path(source).is_dir():
             problems.append(f"Source directory does not exist: {source}")
 
         lt = self._lt_edit.text().strip()
+
         try:
             if float(lt) <= 0:
                 problems.append("Layer thickness must be greater than 0.")
+
         except ValueError:
             problems.append(f"Layer thickness is not a number: {lt or '(empty)'}")
 
         if self._mask_check.isChecked():
             stl = self._stl_edit.text().strip()
+
             if not stl:
                 problems.append("Apply mask is on but no STL file is set.")
+
             elif not Path(stl).is_file():
                 problems.append(f"STL file does not exist: {stl}")
 
@@ -1492,25 +1712,33 @@ class MainWindow(QMainWindow):
 
             if method == "dhxml":
                 dhxml = self._dhxml_edit.text().strip()
+
                 if not dhxml:
                     problems.append(
                         "Assign parts is set to 'dhxml' but no BuildStarted "
                         "DHXML is set."
                     )
+
                 elif not Path(dhxml).is_file():
                     problems.append(f"BuildStarted DHXML does not exist: {dhxml}")
+
                 csv = self._csv_edit.text().strip()
+
                 if csv and not Path(csv).is_file():
                     problems.append(f"Parts CSV does not exist: {csv}")
+
             else:
                 csv = self._csv_edit.text().strip()
+
                 if not csv:
                     problems.append("Assign parts is on but no Parts CSV is set.")
+
                 elif not Path(csv).is_file():
                     problems.append(f"Parts CSV does not exist: {csv}")
 
                 if method == "direct":
                     md = self._max_dist_edit.text().strip().lower()
+
                     if md != "none":
                         try:
                             if float(md) <= 0:
@@ -1707,11 +1935,7 @@ class MainWindow(QMainWindow):
                 except (TypeError, ValueError):
                     pass
         if "LOAD_COLUMNS" in override:
-            lc = override["LOAD_COLUMNS"]
-            if lc is None:
-                self._columns_edit.setText("all")
-            elif isinstance(lc, (list, tuple)):
-                self._columns_edit.setText(", ".join(str(c) for c in lc))
+            self._apply_load_columns(override["LOAD_COLUMNS"])
 
         def _restore_range(key, lo_edit, hi_edit):
             rng = override.get(key)
@@ -1865,13 +2089,7 @@ class MainWindow(QMainWindow):
             hi = self._layer_to_spin.value()
             config["LAYER_RANGE"] = (min(lo, hi), max(lo, hi))
 
-        cols_text = self._columns_edit.text().strip()
-        if not cols_text or cols_text.lower() == "all":
-            config["LOAD_COLUMNS"] = None
-        else:
-            config["LOAD_COLUMNS"] = [
-                col.strip() for col in cols_text.split(",") if col.strip()
-            ]
+        config["LOAD_COLUMNS"] = self._selected_load_columns()
 
         def _gather_range(lo_edit, hi_edit, label):
             lo_txt = lo_edit.text().strip()
