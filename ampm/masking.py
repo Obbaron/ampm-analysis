@@ -2,9 +2,7 @@
 STL masking of AMPM data
 
 Uses full plate export from QuantAM STL to keep only data points
-whose (x, y) falls inside that layer's polygon. Designed for the AMPM workflow
-where coordinates are already aligned (build-plate frame) and slicing is
-naturally per-layer.
+whose (x, y) falls inside that layer's polygon.
 
 Usage
 -----
@@ -30,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import pickle
+import warnings
 from pathlib import Path
 from typing import Iterable
 
@@ -42,8 +41,8 @@ from shapely.geometry.base import BaseGeometry
 
 Mask = dict[int, BaseGeometry]
 
-# STLs above this size are sliced with the streaming slicer instead of trimesh
-LARGE_STL_BYTES = 256 * 2**20  # 256MB
+# Size threshold used by stl_hash to switch from full hashing to sampling.
+LARGE_STL_BYTES = 256 * 2**20  # 256 MB
 
 
 def build_mask(
@@ -85,6 +84,7 @@ def build_mask(
     dict[int, shapely geometry]
     """
     stl_path = Path(stl_path)
+
     if not stl_path.is_file():
         raise FileNotFoundError(f"STL not found:\n{stl_path}")
 
@@ -96,24 +96,43 @@ def build_mask(
 
     if cache_path is not None:
         cache_path = Path(cache_path)
+
         if not force and cache_path.is_file():
             cached = _load_cache(cache_path)
+
             if cached is not None and cached.get("key") == cache_key:
+
                 return cached["mask"]
 
-    if stl_path.stat().st_size > LARGE_STL_BYTES:
+    raw_mask: Mask | None = None
+    try:
         raw_mask = _slice_streaming(stl_path, layer_list, layer_thickness)
-    else:
+
+    except ValueError:
+        raw_mask = None  # ASCII or malformed binary -> use trimesh
+
+    except Exception as exc:  # pragma: no cover - defensive fallback
+        warnings.warn(
+            f"Streaming slicer errored ({exc!r}); falling back to trimesh.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        raw_mask = None
+
+    if raw_mask is None:
         raw_mask = _slice_trimesh(stl_path, layer_list, layer_thickness)
 
     mask: Mask = {}
     for layer_n, geom in raw_mask.items():
         if buffer_mm != 0.0:
             geom = geom.buffer(buffer_mm)
+
             if geom.is_empty:
                 continue
+
         if not isinstance(geom, (Polygon, MultiPolygon)):
             continue
+
         mask[layer_n] = geom
 
     if cache_path is not None:
@@ -127,10 +146,12 @@ def _slice_trimesh(
 ) -> Mask:
     """In-memory slicing via trimesh."""
     mesh = trimesh.load_mesh(stl_path)
+
     if not isinstance(mesh, trimesh.Trimesh):
         raise TypeError(
             f"Expected a single mesh from {stl_path}, got {type(mesh).__name__}. "
         )
+
     if mesh.is_empty or mesh.bounds is None or len(mesh.faces) == 0:
         raise ValueError(f"trimesh loaded {stl_path} as an EMPTY mesh.")
 

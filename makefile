@@ -13,7 +13,7 @@ endif
 PYCHECK := $(SYSTEM_PYTHON) -c "import sys,struct; sys.exit(0 if (sys.version_info[:2]==(3,11) and struct.calcsize('P')*8==64) else 'Need Python 3.11.x 64-bit to match the bundled cp311 wheels; found '+sys.version.split()[0])"
 
 .DEFAULT_GOAL := help
-.PHONY: help setup offline wheels test run build clean profile profile-cpu profile-cluster profile-direct profile-view
+.PHONY: help setup offline wheels test run build clean profile profile-cpu profile-cluster profile-direct profile-dhxml profile-compare profile-view
 
 help:
 	@echo "  setup    - create the venv and install the project (editable, online)"
@@ -26,6 +26,8 @@ help:
 	@echo "  profile-cpu     - same, CPU-only (faster, skips memory)"
 	@echo "  profile-cluster - profile + view the clustering assignment path"
 	@echo "  profile-direct  - profile + view the direct assignment path"
+	@echo "  profile-dhxml   - profile + view the dhxml (bounding-box) assignment path"
+	@echo "  profile-compare - profile + view direct vs dhxml on one masked frame"
 	@echo "  profile-view    - open the last profile (override OUT= to choose)"
 	@echo "  build    - compile a standalone binary from app.spec"
 	@echo "  clean    - remove caches and build artifacts"
@@ -55,7 +57,6 @@ test:
 run:
 	$(VENV_PYTHON) app.py
 
-
 SCALENE       := $(VENV_PYTHON) -m scalene
 PROFILE_SCOPE ?= ampm
 DRIVER        ?= profile.py
@@ -68,12 +69,20 @@ profile-cpu:
 	$(SCALENE) run --cpu-only --profile-only $(PROFILE_SCOPE) --outfile $(OUT) $(DRIVER)
 
 profile-cluster:
-	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile profile-cluster.json profile_cluster.py
+	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile profile-cluster.json profile.py
 	$(SCALENE) view profile-cluster.json
 
 profile-direct:
 	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile profile-direct.json profile_direct.py
 	$(SCALENE) view profile-direct.json
+
+profile-dhxml:
+	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile profile-dhxml.json profile_dhxml.py
+	$(SCALENE) view profile-dhxml.json
+
+profile-compare:
+	$(SCALENE) run --profile-only $(PROFILE_SCOPE) --outfile profile-compare.json profile_compare.py
+	$(SCALENE) view profile-compare.json
 
 profile-view:
 	$(SCALENE) view $(OUT)

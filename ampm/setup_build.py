@@ -28,7 +28,9 @@ _STL_KEYWORDS = {"fullplate", "full", "plate"}
 
 def _find_source_dir(build_dir: Path) -> Path:
     """Walk the tree and find the directory containing packet data files."""
+
     candidates: set[Path] = set()
+
     for path in build_dir.rglob("*.txt"):
         if _PACKET_RE.match(path.name):
             candidates.add(path.parent)
@@ -38,27 +40,32 @@ def _find_source_dir(build_dir: Path) -> Path:
             f"No 'Packet data for layer N, laser M.txt' files found "
             f"under {build_dir}"
         )
+
     if len(candidates) > 1:
         raise ValueError(
             "Packet data files found in multiple directories:\n"
             + "\n".join(f"  {c}" for c in sorted(candidates))
         )
+
     return candidates.pop()
 
 
 def _stl_depth(path: Path, build_dir: Path) -> int:
     """Number of directories between the file and the build root."""
+
     return len(path.relative_to(build_dir).parts) - 1
 
 
 def _stl_has_keyword(path: Path) -> bool:
     """True if the filename contains 'fullplate', 'full', or 'plate'."""
+
     name_lower = path.stem.lower()
     return any(kw in name_lower for kw in _STL_KEYWORDS)
 
 
 def _stl_is_support(path: Path) -> bool:
     """True if the filename ends with '_s' (QuantAM supports export)."""
+
     return path.stem.lower().endswith("_s")
 
 
@@ -71,9 +78,12 @@ def _find_stl(build_dir: Path) -> Path:
     2. Name keywords — 'fullplate', 'full', 'plate' preferred
     3. Non-support — '<name>.stl' preferred over '<name>_s.stl'
     """
+
     stls = sorted(build_dir.rglob("*.stl"))
+
     if not stls:
         raise FileNotFoundError(f"No .stl files found under {build_dir}")
+
     if len(stls) == 1:
         return stls[0]
 
@@ -84,6 +94,7 @@ def _find_stl(build_dir: Path) -> Path:
             1 if _stl_is_support(p) else 0,
         )
     )
+
     return stls[0]
 
 
@@ -92,8 +103,11 @@ def _is_quantam_csv(path: Path) -> bool:
     try:
         with open(path, "r", encoding="utf-8-sig") as f:
             first_line = f.readline().strip()
+
         return first_line == _QUANTAM_HEADER
+
     except (OSError, UnicodeDecodeError):
+
         return False
 
 
@@ -105,8 +119,10 @@ def _find_parts_csv(build_dir: Path) -> Path:
     zero or multiple CSVs match.
     """
     csvs = sorted(build_dir.rglob("*.csv"))
+
     if not csvs:
         raise FileNotFoundError(f"No .csv files found under {build_dir}")
+
     if len(csvs) == 1:
         return csvs[0]
 
@@ -114,11 +130,13 @@ def _find_parts_csv(build_dir: Path) -> Path:
 
     if len(quantam_csvs) == 1:
         return quantam_csvs[0]
+
     if len(quantam_csvs) == 0:
         raise FileNotFoundError(
             f"Found {len(csvs)} CSV files under {build_dir} but none "
             f"have the QuantAM header."
         )
+
     raise ValueError(
         f"Found {len(quantam_csvs)} CSVs with the QuantAM header:"
         + "\n".join(f"  {path}" for path in quantam_csvs)
@@ -200,6 +218,7 @@ def create_config(
     Path to the written config.toml.
     """
     build_dir = Path(build_dir).resolve()
+
     if not build_dir.is_dir():
         raise FileNotFoundError(f"Directory not found:\n{build_dir}")
 
@@ -209,37 +228,55 @@ def create_config(
         source_path = _find_source_dir(build_dir)
 
     if stl is not None:
-        stl_path = Path(stl).resolve()
+        stl_path: Path | None = Path(stl).resolve()
+
     else:
-        stl_path = _find_stl(build_dir)
+        try:
+            stl_path = _find_stl(build_dir)
+
+        except FileNotFoundError:
+            stl_path = None
 
     if parts_csv is not None:
-        csv_path = Path(parts_csv).resolve()
+        csv_path: Path | None = Path(parts_csv).resolve()
+
     else:
-        csv_path = _find_parts_csv(build_dir)
+        try:
+            csv_path = _find_parts_csv(build_dir)
 
-    layer_thickness = _extract_layer_thickness(csv_path)
+        except FileNotFoundError:
+            csv_path = None
 
-    try:
-        source_rel = source_path.relative_to(build_dir)
-    except ValueError:
-        source_rel = source_path  # absolute if outside build_dir
+    layer_thickness = _extract_layer_thickness(csv_path) if csv_path else None
 
-    try:
-        stl_rel = stl_path.relative_to(build_dir)
-    except ValueError:
-        stl_rel = stl_path
+    def _rel(path: Path | None) -> str:
+        if path is None:
+            return ""
+        try:
+            return str(path.relative_to(build_dir))
+        except ValueError:
+            return str(path)  # absolute if outside build_dir
 
-    try:
-        csv_rel = csv_path.relative_to(build_dir)
-    except ValueError:
-        csv_rel = csv_path
+    source_rel = _rel(source_path)
+    stl_rel = _rel(stl_path)
+    csv_rel = _rel(csv_path)
+
+    if layer_thickness is None:
+        lt_line = (
+            "layer_thickness = 0.0  # SET THIS (mm): no parts CSV found to "
+            "auto-detect from\n"
+        )
+
+    else:
+        lt_line = f"layer_thickness = {layer_thickness}  # mm\n"
 
     toml_path = build_dir / "config.toml"
     toml_content = (
         "# ampm build configuration (auto-generated by setup_build.py)\n"
         "#\n"
         "# Paths are relative to this file's directory.\n"
+        "# stl/parts_csv may be empty: STL is only needed for masking, the\n"
+        "# parts CSV only for the 'direct'/'dbscan' methods and power/speed.\n"
         "\n"
         "[paths]\n"
         f"source    = '{source_rel}'\n"
@@ -247,10 +284,10 @@ def create_config(
         f"parts_csv = '{csv_rel}'\n"
         "\n"
         "[build]\n"
-        f"layer_thickness = {layer_thickness}  # mm\n"
+        f"{lt_line}"
         "\n"
         "[assignment]\n"
-        "method          = 'direct'  # 'direct' or 'dbscan'\n"
+        "method          = 'direct'  # 'direct', 'dbscan', or 'dhxml'\n"
         "max_distance_mm = 'none'    # only used with direct; 'none' = assign all\n"
         "\n"
         "[clustering]\n"
@@ -265,4 +302,5 @@ def create_config(
     )
 
     toml_path.write_text(toml_content, encoding="utf-8")
+
     return toml_path

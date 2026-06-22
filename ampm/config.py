@@ -18,12 +18,15 @@ from pathlib import Path
 
 if sys.version_info >= (3, 11):
     import tomllib
+
 else:
     try:
         import tomllib
+
     except ModuleNotFoundError:
         try:
             import tomli as tomllib
+
         except ModuleNotFoundError:
             sys.exit(
                 "Python < 3.11 requires the 'tomli' package.\n"
@@ -33,9 +36,19 @@ else:
 
 def _resolve_path(path_str: str, base_dir: Path) -> str:
     path = Path(path_str)
+
     if path.is_absolute():
         return str(path)
+
     return str(base_dir / path)
+
+
+def _resolve_optional(path_str: str | None, base_dir: Path) -> str:
+    """Like ``_resolve_path`` but maps empty/None to "" (path not set)."""
+    if not path_str:
+        return ""
+
+    return _resolve_path(path_str, base_dir)
 
 
 def load_config(build_dir: str | Path) -> dict:
@@ -58,22 +71,29 @@ def load_config(build_dir: str | Path) -> dict:
     try:
         with open(toml_path, "rb") as file:
             _config = tomllib.load(file)
+
     except FileNotFoundError:
         sys.exit(f"ERROR: config.toml not found in {build_dir}\n")
+
     except tomllib.TOMLDecodeError as e:
         sys.exit(f"ERROR: {toml_path} has invalid syntax:\n{e}")
 
     try:
         source = _resolve_path(_config["paths"]["source"], build_dir)
-        stl = _resolve_path(_config["paths"]["stl"], build_dir)
-        parts_csv = _resolve_path(_config["paths"]["parts_csv"], build_dir)
-        layer_thickness = _config["build"]["layer_thickness"]
+
     except KeyError as e:
         sys.exit(f"ERROR: Missing required key in {toml_path}: {e}")
+
+    paths = _config.get("paths", {})
+    stl = _resolve_optional(paths.get("stl"), build_dir)
+    parts_csv = _resolve_optional(paths.get("parts_csv"), build_dir)
+
+    layer_thickness = _config.get("build", {}).get("layer_thickness", 0.0)
 
     assignment = _config.get("assignment", {})
     method = assignment.get("method", "direct")
     max_distance_mm = assignment.get("max_distance_mm", "none")
+
     if isinstance(max_distance_mm, str) and max_distance_mm.lower() == "none":
         max_distance_mm = None
 
@@ -83,6 +103,7 @@ def load_config(build_dir: str | Path) -> dict:
     min_samples = clustering.get("min_samples", 10)
     layers_per_chunk = clustering.get("layers_per_chunk", 11)
     overlap_layers = clustering.get("overlap_layers", "auto")
+
     if isinstance(overlap_layers, str) and overlap_layers.lower() == "auto":
         overlap_layers = None
 

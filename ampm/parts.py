@@ -70,12 +70,14 @@ def _iter_sections(text: str) -> Iterator[tuple[str, int, list[list[str]]]]:
     i = 0
     while i < len(rows):
         row = rows[i]
+
         if len(row) >= 2 and row[0] == "#" and row[1].startswith("Tab - "):
             tab_num = int(row[1].removeprefix("Tab - ").strip())
             section_name = row[2] if len(row) >= 3 else ""
 
             if i + 1 >= len(rows):
                 break
+
             header_row = rows[i + 1]
             if not header_row or header_row[0] != "#":
                 raise ValueError(
@@ -86,6 +88,7 @@ def _iter_sections(text: str) -> Iterator[tuple[str, int, list[list[str]]]]:
             data_start = i + 3
             data_rows = []
             j = data_start
+
             while j < len(rows):
                 r = rows[j]
                 if not r or all(cell == "" for cell in r):
@@ -117,12 +120,16 @@ def _section_to_dataframe(
     cleaned: list[list[str]] = []
     for r in data_rows:
         body = r[1:] if r and r[0] == "" else r
+
         while body and body[-1] == "":
             body.pop()
+
         if len(body) < len(headers):
             body = body + [""] * (len(headers) - len(body))
+
         elif len(body) > len(headers):
             body = body[: len(headers)]
+
         cleaned.append(body)
 
     if not cleaned:
@@ -140,6 +147,7 @@ def _section_to_dataframe(
         s = df[c]
         coerced = _try_numeric(s)
         out_cols.append(coerced if coerced is not None else s)
+
     return pl.DataFrame(out_cols)
 
 
@@ -147,16 +155,20 @@ def _try_numeric(s: pl.Series) -> pl.Series | None:
     """Return a numeric version of ``s`` if every non-empty value parses; else None."""
     if s.dtype != pl.String:
         return None  # already numeric or non-string
+
     cast = s.cast(pl.Float64, strict=False)
     original_non_empty = s.str.len_chars() > 0
     new_nulls = cast.is_null() & original_non_empty
+
     if new_nulls.any():
         return None
+
     if (
         cast.drop_nulls().is_finite().all()
         and (cast.drop_nulls() == cast.drop_nulls().cast(pl.Int64)).all()
     ):
         return cast.cast(pl.Int64).alias(s.name)
+
     return cast.alias(s.name)
 
 
@@ -184,12 +196,15 @@ class QuantAMParts:
     def from_path(cls, path: str | Path) -> "QuantAMParts":
         """Load and parse a QuantAM parts CSV."""
         path = Path(path)
+
         if not path.is_file():
             raise FileNotFoundError(f"QuantAM parts file not found:\n{path}")
+
         text = path.read_text(encoding="utf-8-sig")  # handles BOM if present
 
         sections: dict[str, pl.DataFrame] = {}
         tab_numbers: dict[str, int] = {}
+
         for name, tab_num, rows in _iter_sections(text):
             df = _section_to_dataframe(rows[0], rows[1:])
             sections[name] = df
@@ -200,14 +215,17 @@ class QuantAMParts:
                 f"No 'Tab - N' sections found in {path}. "
                 f"Is this a QuantAM parts CSV?"
             )
+
         return cls(sections, tab_numbers, path=path)
 
     def __getitem__(self, section_name: str) -> pl.DataFrame:
         if section_name not in self._sections:
             available = ", ".join(self._sections)
+
             raise KeyError(
                 f"Section {section_name!r} not in file. Available: {available}"
             )
+
         return self._sections[section_name]
 
     def __contains__(self, section_name: str) -> bool:
@@ -223,6 +241,7 @@ class QuantAMParts:
         for name, num in self._tab_numbers.items():
             if num == tab_number:
                 return self._sections[name]
+
         raise KeyError(f"No section with tab number {tab_number}")
 
     def __repr__(self) -> str:
@@ -265,6 +284,7 @@ class QuantAMParts:
         """
         if SECTION_PARENT not in self._sections:
             raise ValueError(f"No {SECTION_PARENT!r} section found in {self.path}")
+
         df = self._sections[SECTION_PARENT]
 
         wanted = {
@@ -275,12 +295,14 @@ class QuantAMParts:
             "Y Position": "Y Position",
             "Layers Count": "Layers Count",
         }
+
         missing = [c for c in wanted if c not in df.columns]
         if missing:
             raise ValueError(
                 f"{SECTION_PARENT!r} section missing columns {missing}. "
                 f"Found: {df.columns}"
             )
+
         out = df.select([pl.col(src).alias(dst) for src, dst in wanted.items()])
         out = out.with_columns(pl.col("Sr. No.").cast(pl.Int64))
 
@@ -311,6 +333,7 @@ class QuantAMParts:
         """
         if SECTION_SCAN_VOLUME not in self._sections:
             raise ValueError(f"No {SECTION_SCAN_VOLUME!r} section found in {self.path}")
+
         parent = self._parent_with_instances()
         volume = self._sections[SECTION_SCAN_VOLUME]
 
@@ -322,6 +345,7 @@ class QuantAMParts:
 
         sr_str = volume["Sr. No."].cast(pl.String)
         variant_suffix = f".{variant}"
+
         volume_v = (
             volume.filter(sr_str.str.ends_with(variant_suffix))
             .with_columns(
@@ -333,6 +357,7 @@ class QuantAMParts:
             )
             .drop("Source Index")
         )
+
         return parent.join(volume_v, on="Sr. No.", how="left").drop("Sr. No.")
 
     def volume_parameters_with_speed(self, *, variant: str = "1") -> pl.DataFrame:
@@ -350,12 +375,14 @@ class QuantAMParts:
         (``Hatches Point Distance``, ``Hatches Exposure Time``) are preserved.
         """
         df = self.volume_parameters(variant=variant)
+
         for c in ("Hatches Point Distance", "Hatches Exposure Time"):
             if c not in df.columns:
                 raise ValueError(
                     f"Cannot derive Hatch Speed: column {c!r} missing from "
                     f"{SECTION_SCAN_VOLUME!r}. Found: {df.columns}"
                 )
+
         return df.with_columns(
             (
                 pl.col("Hatches Point Distance")
@@ -371,9 +398,12 @@ _DHXML_PARTS_PATH = ("version1", "build", "parts")
 def _parse_bounding_box(value: str | list) -> tuple[float, ...]:
     """Parse a ``"xmin,ymin,zmin,xmax,ymax,zmax"`` box, normalised min<=max."""
     fields = value.split(",") if isinstance(value, str) else list(value)
+
     if len(fields) != 6:
         raise ValueError(f"expected 6 comma-separated numbers, got {value!r}")
+
     xmin, ymin, zmin, xmax, ymax, zmax = (float(v) for v in fields)
+
     return (
         min(xmin, xmax),
         min(ymin, ymax),
@@ -389,6 +419,7 @@ def _suffix_duplicate_names(parts: list[dict]) -> list[dict]:
     counts = Counter(p["name"] for p in parts)
     seen: Counter = Counter()
     out: list[dict] = []
+
     for p in parts:
         name = p["name"]
         if counts[name] > 1:
@@ -397,6 +428,7 @@ def _suffix_duplicate_names(parts: list[dict]) -> list[dict]:
         else:
             part_id = name
         out.append({**p, "part_id": part_id})
+
     return out
 
 
@@ -424,14 +456,17 @@ class BuildStartedDHXML:
         path = Path(path)
         if not path.is_file():
             raise FileNotFoundError(f"BuildStarted DHXML not found:\n{path}")
+
         try:
             raw = json.loads(path.read_text(encoding="utf-8-sig"))
+
         except json.JSONDecodeError as e:
             raise ValueError(
                 f"{path} is not valid JSON; is this a BuildStarted DHXML? ({e})"
             ) from e
 
         node = raw
+
         for key in _DHXML_PARTS_PATH:
             if not isinstance(node, dict) or key not in node:
                 raise ValueError(
@@ -439,18 +474,22 @@ class BuildStartedDHXML:
                     f"missing {'/'.join(_DHXML_PARTS_PATH)!r}."
                 )
             node = node[key]
+
         if not isinstance(node, list) or not node:
             raise ValueError(f"No parts listed in {path}.")
 
         parsed: list[dict] = []
+
         for i, entry in enumerate(node):
             try:
                 name = str(entry["name"])
                 bbox = _parse_bounding_box(entry["boundingBox"])
+
             except (KeyError, TypeError, ValueError) as e:
                 raise ValueError(
                     f"Malformed part entry #{i} in {path}: {entry!r} ({e})"
                 ) from e
+
             parsed.append({"name": name, "bbox": bbox})
 
         return cls(_suffix_duplicate_names(parsed), raw=raw, path=path)
@@ -472,6 +511,7 @@ class BuildStartedDHXML:
         and XY-centre ``X Position`` / ``Y Position`` (named to match
         ``QuantAMParts.parent_parts``)."""
         pid, xmin, ymin, zmin, xmax, ymax, zmax = ([] for _ in range(7))
+
         for p in self._parts:
             a, b, c, d, e, f = p["bbox"]
             pid.append(p["part_id"])
@@ -545,6 +585,7 @@ def compute_part_id_map(
     for c in (cluster_col, cluster_x_col, cluster_y_col):
         if c not in clustered.columns:
             raise KeyError(f"Column {c!r} not in clustered DataFrame")
+
     for c in (parts_id_col, parts_x_col, parts_y_col):
         if c not in parts_table.columns:
             raise KeyError(f"Column {c!r} not in parts_table")
@@ -567,41 +608,51 @@ def compute_part_id_map(
         return {}
 
     cluster_ids = centroids[cluster_col].to_numpy()
+
     cx = centroids["_cx"].to_numpy()
     cy = centroids["_cy"].to_numpy()
+
     px = parts_table[parts_x_col].to_numpy()
     py = parts_table[parts_y_col].to_numpy()
+
     part_ids = parts_table[parts_id_col].to_list()
 
     dx = cx[:, None] - px[None, :]
     dy = cy[:, None] - py[None, :]
+
     dist2 = dx * dx + dy * dy
 
     nearest_idx = dist2.argmin(axis=1)
     nearest_dist = np.sqrt(dist2[np.arange(len(cluster_ids)), nearest_idx])
 
     mapping: dict[int, str] = {}
+
     for i, cid in enumerate(cluster_ids):
         mapping[int(cid)] = part_ids[int(nearest_idx[i])]
 
     if verbose:
         counts = Counter(mapping.values())
         collisions = {p: n for p, n in counts.items() if n > 1}
+
         if collisions:
             print(
                 f"[part_id_map] Warning: {len(collisions)} part(s) claimed by "
                 f"multiple clusters:"
             )
+
             for p, n in collisions.items():
                 claiming = [c for c, mapped in mapping.items() if mapped == p]
+
                 print(f"  {p}: claimed by clusters {claiming}")
 
         far = nearest_dist > max_distance_mm
+
         if far.any():
             print(
                 f"[part_id_map] Warning: {int(far.sum())} cluster(s) more than "
                 f"{max_distance_mm} mm from nearest part:"
             )
+
             for i in np.flatnonzero(far):
                 print(
                     f"  cluster {int(cluster_ids[i])} -> {part_ids[int(nearest_idx[i])]}: "
@@ -609,6 +660,7 @@ def compute_part_id_map(
                 )
 
         unmatched_parts = set(part_ids) - set(mapping.values())
+
         if unmatched_parts:
             print(
                 f"[part_id_map] Note: {len(unmatched_parts)} part(s) had no "
@@ -659,6 +711,7 @@ def apply_part_id_map(
 
     all_cluster_ids = clustered[cluster_col].unique().to_list()
     full_mapping: dict[int, str | None] = {int(k): v for k, v in mapping.items()}
+
     for cid in all_cluster_ids:
         if int(cid) not in full_mapping:
             full_mapping[int(cid)] = noise_label
@@ -711,6 +764,7 @@ def join_parts_with_stats(
     """
     if stats_part_col not in stats_table.columns:
         raise KeyError(f"stats_part_col {stats_part_col!r} not in stats_table")
+
     if parts_part_col not in parts_table.columns:
         raise KeyError(f"parts_part_col {parts_part_col!r} not in parts_table")
 
@@ -718,6 +772,7 @@ def join_parts_with_stats(
     right = parts_table.with_columns(
         pl.col(parts_part_col).cast(pl.String).alias(stats_part_col)
     )
+
     if parts_part_col != stats_part_col:
         right = right.drop(parts_part_col)
 
@@ -725,9 +780,11 @@ def join_parts_with_stats(
 
     if verbose:
         parts_only_cols = [c for c in right.columns if c != stats_part_col]
+
         if parts_only_cols:
             probe = parts_only_cols[0]
             missing_rows = out.filter(pl.col(probe).is_null())
+
             if missing_rows.height > 0:
                 missing_ids = missing_rows[stats_part_col].to_list()
                 print(
@@ -741,6 +798,7 @@ def join_parts_with_stats(
         stats_part_set = set(left[stats_part_col].to_list())
         parts_part_set = set(right[stats_part_col].to_list())
         parts_only = parts_part_set - stats_part_set
+
         if parts_only:
             print(
                 f"[join_parts_with_stats] Note: "
@@ -812,9 +870,11 @@ def assign_nearest_part(
     for c in (x_col, y_col):
         if c not in masked.columns:
             raise KeyError(f"Column {c!r} not in masked DataFrame")
+
     for c in (parts_id_col, parts_x_col, parts_y_col):
         if c not in parts_table.columns:
             raise KeyError(f"Column {c!r} not in parts_table")
+
     if parts_table.is_empty():
         raise ValueError("parts_table is empty")
 
@@ -831,53 +891,78 @@ def assign_nearest_part(
 
     categories = [str(p) for p in part_ids]
     noise_code: int | None = None
+
     if noise_label is not None:
         if noise_label not in categories:
             categories.append(noise_label)
+
         noise_code = categories.index(noise_label)
 
     codes = np.empty(n_rows, dtype=np.uint32)
+
     null_far = (
         np.zeros(n_rows, dtype=bool)
         if (max_distance_mm is not None and noise_label is None)
         else None
     )
+
     counts = np.zeros(n_parts, dtype=np.int64)
     dist_sums = np.zeros(n_parts, dtype=np.float64)
     dist_maxs = np.zeros(n_parts, dtype=np.float32)
     n_too_far = 0
 
     tree = KDTree(np.column_stack((px, py)))
-    _, nearest = tree.query(np.column_stack((x, y)), k=1, workers=1)
-    nearest = np.asarray(nearest, dtype=np.int64).reshape(-1)
 
-    dxp = x - px[nearest]
-    dyp = y - py[nearest]
-    d = np.sqrt(dxp * dxp + dyp * dyp)
-    del dxp, dyp
+    chunk = 2_000_000
 
-    codes[:] = nearest.astype(np.uint32)
-    keep_idx = nearest
-    keep_d = d
-    if max_distance_mm is not None:
-        far = d > max_distance_mm
-        n_too_far = int(far.sum())
-        if n_too_far:
-            if noise_code is not None:
-                codes[far] = noise_code
-            else:
-                null_far[:] = far
-            keep = ~far
-            keep_idx = nearest[keep]
-            keep_d = d[keep]
+    for start in range(0, n_rows, chunk):
+        stop = min(start + chunk, n_rows)
+        xc = x[start:stop]
+        yc = y[start:stop]
 
-    if keep_idx.size:
-        counts += np.bincount(keep_idx, minlength=n_parts)
-        dist_sums += np.bincount(keep_idx, weights=keep_d, minlength=n_parts)
-        np.maximum.at(dist_maxs, keep_idx, keep_d.astype(np.float32))
+        _, nearest = tree.query(np.column_stack((xc, yc)), k=1, workers=1)
+        nearest = np.asarray(nearest, dtype=np.int64).reshape(-1)
+
+        dxp = xc - px[nearest]
+        dyp = yc - py[nearest]
+
+        d = np.sqrt(dxp * dxp + dyp * dyp)
+
+        del dxp, dyp
+
+        chunk_codes = nearest.astype(np.uint32)
+        keep_idx = nearest
+        keep_d = d
+
+        if max_distance_mm is not None:
+            far = d > max_distance_mm
+            n_far = int(far.sum())
+
+            if n_far:
+                n_too_far += n_far
+
+                if noise_code is not None:
+                    chunk_codes[far] = noise_code
+
+                else:
+                    null_far[start:stop] = far
+
+                keep = ~far
+                keep_idx = nearest[keep]
+                keep_d = d[keep]
+
+        codes[start:stop] = chunk_codes
+
+        if keep_idx.size:
+            counts += np.bincount(keep_idx, minlength=n_parts)
+            dist_sums += np.bincount(keep_idx, weights=keep_d, minlength=n_parts)
+            np.maximum.at(dist_maxs, keep_idx, keep_d.astype(np.float32))
+
+        del nearest, d, chunk_codes, keep_idx, keep_d
 
     if n_too_far > 0 and verbose:
         pct = n_too_far / n_rows
+
         print(
             f"[assign_nearest_part] {n_too_far:,} row(s) "
             f"({pct:.1%}) farther than {max_distance_mm} mm from any "
@@ -888,6 +973,7 @@ def assign_nearest_part(
     part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
         pl.Enum(categories)
     )
+
     if null_far is not None and n_too_far > 0:
         part_series = pl.DataFrame({part_id_col: part_series, "_f": null_far}).select(
             pl.when(pl.col("_f"))
@@ -902,11 +988,14 @@ def assign_nearest_part(
         print(
             f"[assign_nearest_part] Assigned {n_rows:,} rows to " f"{n_parts} part(s):"
         )
+
         for i, pid in enumerate(part_ids):
             n = int(counts[i])
+
             if n == 0:
                 print(f"  {pid}: 0 rows assigned")
                 continue
+
             print(
                 f"  {pid}: {n:>9,} rows, "
                 f"distance mean={dist_sums[i] / n:.2f} mm, "
@@ -960,40 +1049,51 @@ def assign_bounding_box_part(
         ``masked`` with ``part_id_col`` added (``pl.Enum``).
     """
     needed_masked = [x_col, y_col] + ([z_col] if use_z else [])
+
     for c in needed_masked:
         if c not in masked.columns:
             raise KeyError(f"Column {c!r} not in masked DataFrame")
+
     needed_parts = [parts_id_col, xmin_col, ymin_col, xmax_col, ymax_col]
+
     if use_z:
         needed_parts += [zmin_col, zmax_col]
+
     for c in needed_parts:
         if c not in parts_table.columns:
             raise KeyError(f"Column {c!r} not in parts_table")
+
     if parts_table.is_empty():
         raise ValueError("parts_table is empty")
 
     n_parts = parts_table.height
     part_ids = parts_table[parts_id_col].to_list()
+
     xmin = parts_table[xmin_col].to_numpy().astype(np.float64)
     ymin = parts_table[ymin_col].to_numpy().astype(np.float64)
     xmax = parts_table[xmax_col].to_numpy().astype(np.float64)
     ymax = parts_table[ymax_col].to_numpy().astype(np.float64)
+
     if use_z:
         zmin = parts_table[zmin_col].to_numpy().astype(np.float64)
         zmax = parts_table[zmax_col].to_numpy().astype(np.float64)
+
     cx = (xmin + xmax) / 2.0
     cy = (ymin + ymax) / 2.0
 
     x = masked[x_col].to_numpy()
     y = masked[y_col].to_numpy()
     z = masked[z_col].to_numpy() if use_z else None
+
     n_rows = x.shape[0]
 
     categories = [str(p) for p in part_ids]
     noise_code: int | None = None
+
     if noise_label is not None:
         if noise_label not in categories:
             categories.append(noise_label)
+
         noise_code = categories.index(noise_label)
 
     codes = np.zeros(n_rows, dtype=np.uint32)
@@ -1019,10 +1119,13 @@ def assign_bounding_box_part(
             inside = (
                 (xs >= xmin[j]) & (xs <= xmax[j]) & (ys >= ymin[j]) & (ys <= ymax[j])
             )
+
             if use_z:
                 inside &= (zs >= zmin[j]) & (zs <= zmax[j])
+
             if not inside.any():
                 continue
+
             d2 = (xs - cx[j]) ** 2 + (ys - cy[j]) ** 2
             take = inside & (d2 < best_dist2)
             best_code[take] = j
@@ -1030,20 +1133,24 @@ def assign_bounding_box_part(
             any_inside |= inside
 
         inside_idx = best_code[any_inside]
+
         if inside_idx.size:
             counts += np.bincount(inside_idx, minlength=n_parts)
 
         if not any_inside.all():
             miss = ~any_inside
             n_unassigned += int(miss.sum())
+
             if noise_code is not None:
                 best_code[miss] = noise_code
             else:
                 unassigned[start:stop] = miss
+
         codes[start:stop] = best_code
 
     if n_unassigned and verbose:
         pct = n_unassigned / n_rows if n_rows else 0.0
+
         print(
             f"[assign_bounding_box_part] {n_unassigned:,} row(s) "
             f"({pct:.1%}) fell outside every part bounding box "
@@ -1054,6 +1161,7 @@ def assign_bounding_box_part(
     part_series = pl.Series(part_id_col, pl.from_arrow(dict_arr)).cast(
         pl.Enum(categories)
     )
+
     if noise_label is None and n_unassigned > 0:
         part_series = pl.DataFrame({part_id_col: part_series, "_u": unassigned}).select(
             pl.when(pl.col("_u"))
@@ -1070,6 +1178,7 @@ def assign_bounding_box_part(
             f"[assign_bounding_box_part] Assigned {n_rows:,} rows to "
             f"{n_parts} part(s) by {dims} bounding box:"
         )
+
         for i, pid in enumerate(part_ids):
             print(f"  {pid}: {int(counts[i]):>9,} rows")
 

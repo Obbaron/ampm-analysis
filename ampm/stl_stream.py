@@ -89,13 +89,16 @@ def slice_stl_streaming(
     """
     stl_path = Path(stl_path)
     layer_list = np.array(sorted(set(int(L) for L in layers)), dtype=np.int64)
+
     if layer_list.size == 0:
         raise ValueError("No layers requested.")
+
     plane_z = layer_list * float(layer_thickness) + _PLANE_EPS
 
     n_tri = _read_binary_stl_header(stl_path)
 
     work_dir = Path(tempfile.mkdtemp(prefix="stl_slice_", dir=tmp_dir))
+
     try:
         seg_counts = _pass1_extract_segments(
             stl_path,
@@ -112,6 +115,7 @@ def slice_stl_streaming(
             layers_per_bucket=layers_per_bucket,
             verbose=verbose,
         )
+
         if verbose:
             print(
                 f"  [stl_stream] sliced {n_tri:,} triangles -> "
@@ -119,6 +123,7 @@ def slice_stl_streaming(
                 f"{len(mask)}/{layer_list.size} layers"
             )
         return mask
+
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -145,21 +150,28 @@ def _read_binary_stl_header(stl_path: Path) -> int:
         triangles.
     """
     size = stl_path.stat().st_size
+
     with stl_path.open("rb") as f:
         head = f.read(_HEADER_BYTES)
+
     if len(head) < _HEADER_BYTES:
         raise ValueError(f"{stl_path}: too small")
+
     if head[:5].lower() == b"solid" and b"\x00" not in head:
         raise ValueError("Streaming slicer only supports binary STL.")
+
     (n_tri,) = struct.unpack("<I", head[80:84])
     expected = _HEADER_BYTES + n_tri * _RECORD_BYTES
+
     if expected != size:
         raise ValueError(
             f"{stl_path}: header declares {n_tri:,} triangles "
             f"(expects {expected:,} bytes) but file is {size:,} bytes."
         )
+
     if n_tri == 0:
         raise ValueError(f"{stl_path}: STL contains zero triangles.")
+
     return n_tri
 
 
@@ -200,32 +212,42 @@ def _pass1_extract_segments(
     """
     total_segments = 0
     done = 0
+
     with stl_path.open("rb") as f:
         f.seek(_HEADER_BYTES)
+
         while done < n_tri:
             count = min(chunk_triangles, n_tri - done)
             tris = np.fromfile(f, dtype=_TRI_DTYPE, count=count)
+
             if tris.size == 0:
                 break
+
             verts = tris["verts"]
             del tris
 
             vz = verts[:, :, 2]
             i0 = np.searchsorted(plane_z, vz.min(axis=1), side="left")
             i1 = np.searchsorted(plane_z, vz.max(axis=1), side="right")
+
             reps = (i1 - i0).clip(min=0)
             bounds = _batch_bounds(np.cumsum(reps), _MAX_EXPANDED_ROWS)
+
             for a, b in bounds:
                 segs, plane_idx = _intersect_chunk(verts[a:b], plane_z)
+
                 if segs.shape[0]:
                     _spill_segments(segs, plane_idx, work_dir, layers_per_bucket)
                     total_segments += segs.shape[0]
+
             done += count
+
             if verbose:
                 print(
                     f"  [stl_stream] [{done:,}/{n_tri:,}] triangles "
                     f"({total_segments:,} segments)"
                 )
+
     return total_segments
 
 
@@ -250,6 +272,7 @@ def _batch_bounds(cum_rows: np.ndarray, cap: int) -> list[tuple[int, int]]:
     start = 0
     base = 0
     n = len(cum_rows)
+
     while start < n:
         end = int(np.searchsorted(cum_rows, base + cap, side="right"))
         end = max(end, start + 1)
@@ -296,6 +319,7 @@ def _intersect_chunk(
     planes_per_tri = (plane_stop - plane_start).clip(min=0)
 
     n_intersections = int(planes_per_tri.sum())
+
     if n_intersections == 0:
         return np.empty((0, 4), np.float32), np.empty((0,), np.int32)
 
@@ -382,9 +406,11 @@ def _spill_segments(
     bucket = plane_idx // layers_per_bucket
     order = np.argsort(bucket, kind="stable")
     bucket = bucket[order]
+
     rows = np.column_stack([plane_idx[order].astype(np.float32), segs[order]])
     edges = np.flatnonzero(np.diff(bucket)) + 1
     pieces = np.split(rows, edges)
+
     ids = bucket[np.concatenate([[0], edges])] if rows.shape[0] else []
 
     for bucket, piece in zip(ids, pieces):
@@ -422,6 +448,7 @@ def _pass2_build_polygons(
     """
     mask: dict[int, BaseGeometry] = {}
     bucket_files = sorted(work_dir.glob("bucket_*.f32"))
+
     for n_done, bf in enumerate(bucket_files, 1):
         rows = np.fromfile(bf, dtype=np.float32).reshape(-1, 5)
         plane_idx = rows[:, 0].astype(np.int64)
@@ -429,13 +456,16 @@ def _pass2_build_polygons(
         plane_idx = plane_idx[order]
         segs = rows[order, 1:].astype(np.float64)
         edges = np.flatnonzero(np.diff(plane_idx)) + 1
+
         for piece, pi in zip(
             np.split(segs, edges),
             plane_idx[np.concatenate([[0], edges])] if segs.shape[0] else [],
         ):
             geom = _polygonize_layer(piece)
+
             if geom is not None and not geom.is_empty:
                 mask[int(layer_list[int(pi)])] = geom
+
         if verbose:
             print(f"  [stl_stream] polygonized bucket {n_done}/{len(bucket_files)}")
 
@@ -466,7 +496,15 @@ def _stitch_rings(segs: np.ndarray) -> list[np.ndarray]:
     quant = np.round(segs / _QUANT).astype(np.int64)  # (M, 4) quantized
     pts = np.concatenate((quant[:, :2], quant[:, 2:]), axis=0)  # (2M, 2)
 
-    _, inv = np.unique(pts, axis=0, return_inverse=True)
+    if int(quant.min()) >= -(2**31) and int(quant.max()) < 2**31:
+        keys = (pts[:, 0].astype(np.int64) << np.int64(32)) | (
+            pts[:, 1].astype(np.int64) & np.int64(0xFFFFFFFF)
+        )
+        _, inv = np.unique(keys, return_inverse=True)
+
+    else:
+        _, inv = np.unique(pts, axis=0, return_inverse=True)
+
     inv = np.asarray(inv).reshape(-1)
 
     start_codes = inv[:M].tolist()
@@ -514,7 +552,8 @@ def _polygonize_layer(segs: np.ndarray) -> BaseGeometry | None:
 
     Rings are classified by signed area (CCW outers, CW holes), each hole
     is assigned to the smallest outer ring that contains it, and the
-    resulting polygons are validated and unioned.
+    resulting polygons are validated and combined (a plain MultiPolygon when
+    the parts are disjoint, falling back to a union when they touch/overlap).
 
     Parameters
     ----------
@@ -543,7 +582,12 @@ def _polygonize_layer(segs: np.ndarray) -> BaseGeometry | None:
     if not outers:
         return None
 
-    outer_polys = [Polygon(o) for o in outers]
+    outer_polys = shapely.polygons(
+        shapely.linearrings(
+            np.concatenate(outers),
+            indices=np.repeat(np.arange(len(outers)), [len(o) for o in outers]),
+        )
+    )
     hole_lists: list[list[np.ndarray]] = [[] for _ in outer_polys]
     if holes:
         tree = STRtree(outer_polys)
@@ -561,7 +605,29 @@ def _polygonize_layer(segs: np.ndarray) -> BaseGeometry | None:
     polys = [
         shapely.make_valid(Polygon(o, holes=hl)) for o, hl in zip(outers, hole_lists)
     ]
-    geom = shapely.union_all(polys)
+
+    parts: list[Polygon] = []
+    for p in polys:
+        if isinstance(p, Polygon):
+            if not p.is_empty:
+                parts.append(p)
+        else:
+            parts.extend(
+                g
+                for g in shapely.get_parts(p)
+                if isinstance(g, Polygon) and not g.is_empty
+            )
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+
+    tree = STRtree(parts)
+    pairs = tree.query(parts, predicate="intersects")
+    if not bool((pairs[0] != pairs[1]).any()):
+        return MultiPolygon(parts)
+
+    geom = shapely.union_all(parts)
     if isinstance(geom, (Polygon, MultiPolygon)) and not geom.is_empty:
         return geom
 

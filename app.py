@@ -1019,7 +1019,7 @@ class MainWindow(QMainWindow):
 
         # Load button
         self._load_btn = QPushButton("Load Data")
-        self._load_btn.setEnabled(False)
+        self._load_btn.setEnabled(True)
         self._load_btn.setMinimumHeight(40)
         self._load_btn.clicked.connect(self._load_data)
         config_layout.addWidget(self._load_btn)
@@ -1135,13 +1135,11 @@ class MainWindow(QMainWindow):
 
         splitter.setSizes([600, 400])  # left, 60%; right, 40%
 
-        for edit in (self._source_edit, self._stl_edit, self._csv_edit, self._lt_edit):
-            edit.textChanged.connect(self._update_load_enabled)
-        self._dhxml_edit.textChanged.connect(self._update_load_enabled)
+        for edit in (self._stl_edit, self._csv_edit, self._dhxml_edit):
+            edit.textChanged.connect(self._refresh_options)
         self._csv_edit.textChanged.connect(self._repopulate_part_filter)
         self._dhxml_edit.textChanged.connect(self._repopulate_part_filter)
-        self._mask_check.toggled.connect(self._update_load_enabled)
-        self._assign_check.toggled.connect(self._update_load_enabled)
+        self._refresh_options()
 
         if self._views:
             self._on_view_changed(self._view_combo.currentText())
@@ -1149,10 +1147,12 @@ class MainWindow(QMainWindow):
     def closeEvent(self, a0):
         """Save UI state and wait for any running threads before closing."""
         self._save_ui_state()
+
         for worker in (self._load_worker, self._plot_worker):
             if worker is not None and worker.isRunning():
                 worker.quit()
                 worker.wait()
+
         if a0 is not None:
             a0.accept()
 
@@ -1325,12 +1325,15 @@ class MainWindow(QMainWindow):
         parent_layout.addLayout(row)
         return spin
 
-    def _on_method_changed(self, method):
+    def _sync_method_widgets(self, method: str) -> None:
         self._cluster_widget.setVisible(method == "dbscan")
         self._dist_widget.setVisible(method == "direct")
         self._dhxml_hint.setVisible(method == "dhxml")
         self._repopulate_part_filter()
-        self._update_load_enabled()
+
+    def _on_method_changed(self, method):
+        self._sync_method_widgets(method)
+        self._refresh_options()
 
     def _on_correction_machine_changed(self, machine):
         current = self._correction_column_combo.currentText()
@@ -1380,26 +1383,89 @@ class MainWindow(QMainWindow):
         self._load_progress.setValue(pct)
         self._load_progress.setFormat(f"{label} \u2014 %p%")
 
-    def _update_load_enabled(self) -> None:
-        """Enable Load only once a config is loaded and required paths are set.
+    def _refresh_options(self) -> None:
+        """Enable only the options the available files can support.
 
-        STL is only required when masking is on. When assigning, the 'dhxml'
-        method requires a BuildStarted DHXML; the other methods require a
-        Parts CSV.
+        STL -> masking; Parts CSV -> direct/dbscan; BuildStarted DHXML -> dhxml.
+        Runs live off the path fields, so Browsing a file unlocks its options.
+        The Load button is not gated here; validation happens on press.
         """
-        ready = self._config is not None and bool(self._source_edit.text().strip())
-        if ready and self._mask_check.isChecked():
-            ready = bool(self._stl_edit.text().strip())
-        if ready and self._assign_check.isChecked():
-            if self._method_combo.currentText() == "dhxml":
-                ready = bool(self._dhxml_edit.text().strip())
-            else:
-                ready = bool(self._csv_edit.text().strip())
-        self._load_btn.setEnabled(ready)
+        if getattr(self, "_in_refresh_options", False):
+            return
+
+        self._in_refresh_options = True
+
+        try:
+            has_stl = bool(self._stl_edit.text().strip())
+            has_csv = bool(self._csv_edit.text().strip())
+            has_dhxml = bool(self._dhxml_edit.text().strip())
+
+            self._mask_check.setEnabled(has_stl)
+
+            if getattr(self, "_prev_has_stl", None) != has_stl:
+                self._mask_check.setChecked(has_stl)
+
+            self._prev_has_stl = has_stl
+
+            self._mask_check.setToolTip(
+                "Filter rows to the part region using the STL geometry"
+                if has_stl
+                else "No STL set"
+            )
+
+            avail = {"direct": has_csv, "dbscan": has_csv, "dhxml": has_dhxml}
+            model = self._method_combo.model()
+
+            for i in range(self._method_combo.count()):
+                method = self._method_combo.itemText(i)
+                ok = avail.get(method, True)
+                item = model.item(i)
+                item.setEnabled(ok)
+                item.setToolTip(
+                    ""
+                    if ok
+                    else (
+                        "Needs a Parts CSV"
+                        if method in ("direct", "dbscan")
+                        else "Needs a BuildStarted DHXML"
+                    )
+                )
+
+            any_method = any(avail.values())
+            if any_method and not avail.get(self._method_combo.currentText(), False):
+                for i in range(self._method_combo.count()):
+                    if avail.get(self._method_combo.itemText(i), False):
+                        self._method_combo.blockSignals(True)
+                        self._method_combo.setCurrentIndex(i)
+                        self._method_combo.blockSignals(False)
+                        self._sync_method_widgets(self._method_combo.currentText())
+                        break
+
+            self._assign_check.setEnabled(any_method)
+
+            if getattr(self, "_prev_any_method", None) != any_method:
+                self._assign_check.setChecked(any_method)
+
+            self._prev_any_method = any_method
+
+            self._assign_check.setToolTip(
+                "Assign each row to its nearest part ID"
+                if any_method
+                else "No Parts CSV or BuildStarted DHXML set"
+            )
+        finally:
+            self._in_refresh_options = False
 
     def _validate_inputs(self) -> list[str]:
         """Check inputs before loading. Returns a list of human-readable problems."""
         problems: list[str] = []
+
+        if self._config is None:
+            problems.append(
+                "No project loaded \u2014 choose a project root first "
+                "(its config failed to load)."
+            )
+            return problems
 
         source = self._source_edit.text().strip()
         if not source:
@@ -1528,14 +1594,14 @@ class MainWindow(QMainWindow):
             self._config = None
             self._project_root = None
             self._log.append(f"ERROR loading config: {e}")
-            self._update_load_enabled()
+            self._refresh_options()
             return
 
         self._config = config
         self._populate_config(config)
         self._refresh_views(path)
         self._load_resume_state(path)
-        self._update_load_enabled()
+        self._refresh_options()
         self._log.append(
             "Config loaded. Review paths and click 'Load Data' when ready."
         )

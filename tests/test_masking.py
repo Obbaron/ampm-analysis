@@ -107,6 +107,7 @@ class TestBuildMask:
         def boom(*a, **k):
             raise AssertionError("cache hit should not re-slice")
 
+        monkeypatch.setattr(masking, "_slice_streaming", boom)
         monkeypatch.setattr(masking, "_slice_trimesh", boom)
         second = build_mask(
             box_stl, layers=[10, 50], layer_thickness=THICKNESS, cache_path=cache
@@ -116,19 +117,22 @@ class TestBuildMask:
     def test_force_ignores_cache(self, box_stl, tmp_path, monkeypatch):
         cache = tmp_path / "mask.pkl"
         build_mask(box_stl, layers=[10], layer_thickness=THICKNESS, cache_path=cache)
-        monkeypatch.setattr(
-            masking,
-            "_slice_trimesh",
-            lambda *a, **k: (_ for _ in ()).throw(AssertionError("resliced")),
+        calls = {"n": 0}
+        real_stream = masking._slice_streaming
+
+        def stream_spy(*a, **k):
+            calls["n"] += 1
+            return real_stream(*a, **k)
+
+        monkeypatch.setattr(masking, "_slice_streaming", stream_spy)
+        build_mask(
+            box_stl,
+            layers=[10],
+            layer_thickness=THICKNESS,
+            cache_path=cache,
+            force=True,
         )
-        with pytest.raises(AssertionError, match="resliced"):
-            build_mask(
-                box_stl,
-                layers=[10],
-                layer_thickness=THICKNESS,
-                cache_path=cache,
-                force=True,
-            )
+        assert calls["n"] == 1
 
     def test_changed_params_invalidate_cache(self, box_stl, tmp_path, monkeypatch):
         cache = tmp_path / "mask.pkl"
@@ -139,22 +143,34 @@ class TestBuildMask:
             buffer_mm=0.0,
             cache_path=cache,
         )
-        # Different buffer -> different cache key -> must re-slice.
-        monkeypatch.setattr(
-            masking,
-            "_slice_trimesh",
-            lambda *a, **k: (_ for _ in ()).throw(AssertionError("resliced")),
+
+        # Different buffer -> different cache key -> must re-slice (streaming path).
+        calls = {"n": 0}
+        real_stream = masking._slice_streaming
+
+        def stream_spy(*a, **k):
+            calls["n"] += 1
+            return real_stream(*a, **k)
+
+        monkeypatch.setattr(masking, "_slice_streaming", stream_spy)
+        build_mask(
+            box_stl,
+            layers=[10],
+            layer_thickness=THICKNESS,
+            buffer_mm=0.5,
+            cache_path=cache,
         )
-        with pytest.raises(AssertionError, match="resliced"):
-            build_mask(
-                box_stl,
-                layers=[10],
-                layer_thickness=THICKNESS,
-                buffer_mm=0.5,
-                cache_path=cache,
-            )
+        assert calls["n"] == 1
 
     def test_non_mesh_load_raises_typeerror(self, box_stl, monkeypatch):
+        # The non-Trimesh guard lives in the trimesh fallback. Force the fallback
+        # (a ValueError from the streaming slicer is how ASCII/malformed STLs are
+        # routed to trimesh), then make load_mesh return a Scene.
+        monkeypatch.setattr(
+            masking,
+            "_slice_streaming",
+            lambda *a, **k: (_ for _ in ()).throw(ValueError("force trimesh")),
+        )
         monkeypatch.setattr(
             masking.trimesh, "load_mesh", lambda *a, **k: trimesh.Scene()
         )
@@ -162,6 +178,14 @@ class TestBuildMask:
             build_mask(box_stl, layers=[10], layer_thickness=THICKNESS)
 
     def test_empty_mesh_raises_valueerror(self, box_stl, monkeypatch):
+        # Force the trimesh fallback, then have it load an empty mesh. The
+        # "force trimesh" ValueError is caught by build_mask; only the EMPTY
+        # ValueError from _slice_trimesh propagates.
+        monkeypatch.setattr(
+            masking,
+            "_slice_streaming",
+            lambda *a, **k: (_ for _ in ()).throw(ValueError("force trimesh")),
+        )
         empty = trimesh.Trimesh(
             vertices=np.zeros((0, 3)), faces=np.zeros((0, 3), dtype=np.int64)
         )
@@ -249,10 +273,6 @@ class TestHashingAndCache:
         assert masking._load_cache(tmp_path / "missing.pkl") is None
 
 
-# --------------------------------------------------------------------------- #
-# Multi-body geometry (real masks are MultiPolygons -- many parts per layer)
-# --------------------------------------------------------------------------- #
-
 requires_rtree = pytest.mark.skipif(
     importlib.util.find_spec("rtree") is None,
     reason="trimesh multi-polygon slicing requires rtree",
@@ -293,29 +313,42 @@ class TestMultiBodyMasking:
         assert geom.area == pytest.approx(200.0, abs=1.0)
 
 
-# --------------------------------------------------------------------------- #
-# Coverage: streaming slice route, non-polygon filter, sampled hash
-# --------------------------------------------------------------------------- #
-
 class TestSlicingRoutes:
-    def test_large_stl_routes_to_streaming(self, box_stl, monkeypatch):
-        # Drop the size threshold below the file so build_mask takes the
-        # constant-memory streaming slicer instead of trimesh.
-        monkeypatch.setattr(masking, "LARGE_STL_BYTES", 1)
+    def test_binary_stl_routes_to_streaming(self, box_stl, monkeypatch):
+        # Routing is by STL format, not size: any binary STL goes through the
+        # streaming slicer, and trimesh is only the ASCII/malformed fallback.
+        calls = {"stream": 0, "trimesh": 0}
+        real_stream = masking._slice_streaming
+
+        def stream_spy(*a, **k):
+            calls["stream"] += 1
+            return real_stream(*a, **k)
+
+        def trimesh_spy(*a, **k):
+            calls["trimesh"] += 1
+            raise AssertionError("binary STL should not hit the trimesh path")
+
+        monkeypatch.setattr(masking, "_slice_streaming", stream_spy)
+        monkeypatch.setattr(masking, "_slice_trimesh", trimesh_spy)
+
         mask = build_mask(box_stl, layers=[50], layer_thickness=THICKNESS)
+        assert calls["stream"] == 1
+        assert calls["trimesh"] == 0
         assert 50 in mask
         assert mask[50].area == pytest.approx(100.0, abs=1.0)
 
     def test_non_polygon_geometry_is_skipped(self, box_stl, monkeypatch):
         from shapely.geometry import Point
 
-        monkeypatch.setattr(masking, "_slice_trimesh", lambda *a, **k: {5: Point(0, 0)})
+        monkeypatch.setattr(
+            masking, "_slice_streaming", lambda *a, **k: {5: Point(0, 0)}
+        )
         mask = build_mask(box_stl, layers=[5], layer_thickness=THICKNESS)
         assert mask == {}
 
     def test_stl_hash_sampled_branch(self, box_stl, monkeypatch):
         full = stl_hash(box_stl)
-        monkeypatch.setattr(masking, "LARGE_STL_BYTES", 1)  # force sampled path
+        monkeypatch.setattr(masking, "LARGE_STL_BYTES", 1)
         sampled = stl_hash(box_stl)
         assert len(sampled) == 64
-        assert sampled != full  # different algorithm than the full-file digest
+        assert sampled != full
