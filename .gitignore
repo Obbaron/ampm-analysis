@@ -218,6 +218,7 @@ build_macos.sh
 explore.py
 mtt.py
 profile_compare.py
+profile_cluster.py
 profile_dhxml.py
 profile_direct.py
 y.py
