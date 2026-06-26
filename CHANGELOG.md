@@ -7,13 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-A structural release with no change to how the application behaves. AMPM Analyzer was
-extracted from a single-package project into the **OHPAL** (OHP Analytics Library)
+## [1.3.1] - 2026-06-26
+
+Mainly a structural release: AMPM Analyzer was
+extracted from a single package project into the **OHPAL** (OHP Analytics Library)
 workspace: the analysis pipeline is now a standalone library (`ohpal.ampm`) that the GUI
 *depends on* rather than *contains*, packaging moved to a uv workspace with a src-layout
 namespace, the import system was cleaned up (no more `sys.path`), and the build, asset
 loading, and developer tooling were reworked to match. The QtWebEngine dependency was
-dropped.
+dropped. Alongside the repackaging, this release also makes project loading fast and
+non-blocking, aligns the Config and Analysis form layouts, and fixes a false validation
+error on the auto-discovered BuildStarted DHXML.
 
 ### Added
 
@@ -36,6 +40,24 @@ dropped.
 
 ### Changed
 
+- **Faster, non-blocking project loading.** Selecting a project root now discovers its
+  config, layer range, columns, and views on a background worker, streaming each step to
+  the log with a progress bar, so the window stays responsive instead of freezing while a
+  build is scanned.
+- **Schema read without building a DataStore.** Listing the loadable columns and the
+  available layer range no longer constructs a `DataStore` (which parsed the derived
+  Parquet) just to configure a load. Columns come from the fixed packet-header schema;
+  trusted when the saved setup matches the current version, otherwise read from a single
+  `.txt` header, and the layer range is parsed straight from the packet filenames. This
+  removes the main delay after picking a project.
+- **Aligned config and analysis forms.** Labelled controls on the Config tab and the
+  Analysis tab's *Axes* and *Settings* groups now share one aligned label/field column
+  instead of ragged per-row layouts, and the X / Y spatial range inputs each take their
+  own row.
+- **DHXML auto-discovery prefers the newest file.** When a folder holds several
+  BuildStarted `.dhxml` files, the most-recently-modified one is selected rather than the
+  alphabetically-first; date-stamped names aren't zero-padded, so name order could
+  otherwise pick an older build.
 - **src-layout namespace packaging.** `ohpal` is now a PEP 420 native namespace package;
   each distribution ships its own subtree under `src/ohpal/` with no `__init__.py` at the
   namespace level, so libraries can share the `ohpal.*` namespace. The application moved to
@@ -66,6 +88,16 @@ dropped.
 
 - **QtWebEngine.** The `PyQt6.QtWebEngineWidgets` / `QtWebEngineCore` / `QtWebChannel`
   stack is no longer used; dropping bundled Chromium runtime to shrink the binary.
+
+### Fixed
+
+- **False "BuildStarted DHXML does not exist" on load.** Config validation could reject
+  a DHXML path that had been correctly auto-discovered, because a stale path saved in the
+  config or the `.ampm-ui.json` sidecar was applied over the discovered one — BuildStarted
+  files are date-stamped, so a path from an earlier export goes out of date. Both the load
+  scan and the saved-setup restore now keep a path only if it still exists, falling back
+  to the freshly-discovered file, so a valid build no longer has to be re-selected by
+  hand.
 
 ## [1.3.0] - 2026-06-22
 
@@ -341,7 +373,8 @@ Initial release.
   `Ctrl+C` forces quit).
 - Documentation: GUI user guide (`docs/APP.md`), README, and pipeline docs.
 
-[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.1...HEAD
+[1.3.1]: https://github.com/Obbaron/ampm-analysis/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.3...v1.2.0
 [1.1.3]: https://github.com/Obbaron/ampm-analysis/compare/v1.1.2...v1.1.3
