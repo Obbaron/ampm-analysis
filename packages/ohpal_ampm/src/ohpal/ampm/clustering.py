@@ -452,7 +452,6 @@ def cluster_dbscan_chunked(
         raise KeyError(f"layer_col {layer_col!r} not in DataFrame")
     if df.is_empty():
         return df.with_columns(pl.lit(-1, dtype=pl.Int32).alias("cluster"))
-
     if mode == "3d":
         min_overlap = max(2, int(np.ceil(eps_z / layer_thickness) * 2))
     else:

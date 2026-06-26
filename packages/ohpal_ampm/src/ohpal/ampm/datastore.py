@@ -137,20 +137,34 @@ class DataStore:
     def _needs_rebuild(self, layer: int) -> bool:
         """
         True if the Parquet for this layer is missing, older than its source,
-        or written with an old cache format version.
+        written with an old cache format version, or built with a different
+        layer thickness.
         """
         src = self._source_files[layer]
         cache = self._cache_path(layer)
+
         if not cache.exists():
             return True
         if src.stat().st_mtime > cache.stat().st_mtime:
             return True
+
         try:
-            schema = pl.scan_parquet(str(cache), glob=False).collect_schema()
-            if schema.get("Z") != pl.Float32:
+            lf = pl.scan_parquet(str(cache), glob=False)
+            if lf.collect_schema().get("Z") != pl.Float32:
                 return True
+
+            head = lf.select("layer", "Z").head(1).collect()
+            if head.height:
+                cached_layer = head["layer"][0]
+                cached_z = head["Z"][0]
+                expected_z = cached_layer * self.layer_thickness
+
+                if abs(cached_z - expected_z) > 1e-4 * max(1.0, abs(expected_z)):
+                    return True
+
         except Exception:
             return True
+
         return False
 
     def _convert_one(self, layer: int) -> None:

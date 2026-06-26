@@ -218,14 +218,15 @@ def _columns_for_source(src: str, project_root: str | None):
         if path is None:
             return [], "No packet data files found in the source directory."
         return _read_header_columns(path), None
-    except Exception as e:  # noqa: BLE001 - surface any read failure in the UI
+
+    except Exception as e:  # noqa: BLE001
         return [], f"Could not read columns: {e}"
 
 
 class NoScrollComboBox(QComboBox):
-    def wheelEvent(self, event):  # noqa: N802 (Qt naming)
-        if event is not None:
-            event.ignore()
+    def wheelEvent(self, e):  # noqa: N802 (Qt naming)
+        if e is not None:
+            e.ignore()
 
 
 def make_form_layout(
@@ -917,14 +918,14 @@ class ConfigScanWorker(QThread):
                     "views": views,
                 }
             )
-        except Exception as e:  # noqa: BLE001 - reported to the log
-            self.finished_err.emit(str(e))
+        except Exception:
+            self.finished_err.emit(traceback.format_exc())
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("OHPAL AMPM Analyzer")
+        self.setWindowTitle("OHPAL - AMPM Viewer")
         self.setMinimumSize(1000, 700)
         self.setWindowIcon(_app_icon())
 
@@ -1723,7 +1724,7 @@ class MainWindow(QMainWindow):
 
         self._layer_from_spin.setValue(lo)
         self._layer_to_spin.setValue(hi)
-        self._layer_avail_label.setText(f"Available: {lo}\u2013{hi} ({count} layers)")
+        self._layer_avail_label.setText(f"Available: {lo} - {hi} ({count} layers)")
 
     def _probe_layers(self) -> None:
         """Synchronous layer probe for a manual source change (project-root
@@ -1996,12 +1997,13 @@ class MainWindow(QMainWindow):
             self._scan_worker.wait()
         self._scan_worker = None
 
-    def _on_scan_err(self, msg):
+    def _on_scan_err(self, tb):
         self._dir_browse.setEnabled(True)
         self._load_progress.setVisible(False)
         self._config = None
         self._project_root = None
-        self._log.append(f"ERROR loading config: {msg}")
+        self._log.append("ERROR loading config:")
+        self._log.append(tb)
         self._refresh_options()
 
         if self._scan_worker is not None:
@@ -2306,7 +2308,7 @@ class MainWindow(QMainWindow):
         problems = self._validate_inputs()
         if problems:
             self._log.append("")
-            self._log.append("Cannot load \u2014 please fix the following:")
+            self._log.append("Cannot load:")
             for p in problems:
                 self._log.append(f"  \u2022 {p}")
             return

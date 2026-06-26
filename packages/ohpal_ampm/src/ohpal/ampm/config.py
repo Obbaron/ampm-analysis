@@ -166,7 +166,7 @@ def create_or_load_config(
     toml_path = build_dir / "config.toml"
 
     if not toml_path.exists():
-        from ampm.setup_build import create_config
+        from ohpal.ampm.setup_build import create_config
 
         create_config(
             build_dir,

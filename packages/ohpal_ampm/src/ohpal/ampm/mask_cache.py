@@ -34,14 +34,6 @@ import numpy as np
 import polars as pl
 import pyarrow.parquet as pq
 
-try:
-    from .memprof import phase
-except ImportError:
-    try:
-        from memprof import phase
-    except ImportError:
-        from contextlib import nullcontext as phase
-
 CACHE_FORMAT_VERSION = 1
 _KEY_COLUMNS: tuple[str, str] = ("layer", "Start time")
 
@@ -400,19 +392,19 @@ def load_mask_keep(
     # Align dtypes to cache schema without loading data
     cached_schema = pl.from_arrow(_empty_schema)
     cast_exprs = []
+
     for k in _KEY_COLUMNS:
         target_dtype = cached_schema[k].dtype
         if df_full[k].dtype != target_dtype:
             cast_exprs.append(pl.col(k).cast(target_dtype))
+
     if cast_exprs:
         df_to_filter = df_full.with_columns(cast_exprs)
     else:
         df_to_filter = df_full
 
-    with phase("mask: keep-array from cached keys (merge-walk)"):
-        keep = _keep_from_cached_keys(df_to_filter, cache_path)
-    with phase("mask: materialize filtered DataFrame (cache hit)"):
-        out = df_to_filter.filter(pl.Series(keep))
+    keep = _keep_from_cached_keys(df_to_filter, cache_path)
+    out = df_to_filter.filter(pl.Series(keep))
 
     if out.is_empty() and not df_full.is_empty():
         msg = f"Mask cache matched 0 of {df_full.height:,} rows.\n" f"{cache_path}"
@@ -580,23 +572,26 @@ def mask_or_load(
             print(f"  [mask_cache] computing fresh mask:\n{cache_path}")
 
         if keep_fn is not None:
-            with phase("mask: compute keep array (apply_mask_keep)"):
-                keep = keep_fn(df_full)
+            keep = keep_fn(df_full)
+
             if keep is None:  # empty input
                 return df_full
+
             keep = np.asarray(keep, dtype=bool)
             if not keep.any() and not df_full.is_empty():
                 raise RuntimeError(f"Masking kept 0 of {df_full.height:,} rows.")
-            with phase("mask: save keep cache (streaming write)"):
-                save_mask_keep_from_keep(
-                    df_full, keep, cache_path, params=params, verbose=verbose
-                )
-            with phase("mask: materialize filtered DataFrame"):
-                return df_full.filter(pl.Series(keep))
 
-        with phase("mask: legacy mask_fn (filter inside)"):
-            masked = mask_fn(df_full)
+            save_mask_keep_from_keep(
+                df_full, keep, cache_path, params=params, verbose=verbose
+            )
+
+            return df_full.filter(pl.Series(keep))
+
+        masked = mask_fn(df_full)
+
         if masked.is_empty() and not df_full.is_empty():
             raise RuntimeError(f"Masking kept 0 of {df_full.height:,} rows.")
+
         save_mask_keep(masked, cache_path, params=params, verbose=verbose)
+
         return masked
